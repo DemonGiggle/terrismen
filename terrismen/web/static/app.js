@@ -12,6 +12,11 @@ const elements = {
   settingsIndicator: document.querySelector("#settings-indicator"),
   uploadForm: document.querySelector("#upload-form"),
   uploadInput: document.querySelector("#upload-input"),
+  uploadSelection: document.querySelector("#upload-selection"),
+  uploadSelectionName: document.querySelector("#upload-selection-name"),
+  uploadSelectionMeta: document.querySelector("#upload-selection-meta"),
+  uploadSubmit: document.querySelector("#upload-submit"),
+  uploadFeedback: document.querySelector("#upload-feedback"),
   documents: document.querySelector("#documents"),
   detail: document.querySelector("#document-detail"),
   documentMeta: document.querySelector("#document-meta"),
@@ -34,8 +39,11 @@ function renderSettingsSummary(settings) {
 
 function renderDocuments() {
   if (!state.documents.length) {
-    elements.documents.className = "document-list empty";
-    elements.documents.textContent = "No documents yet.";
+    elements.documents.className = "document-list empty document-empty-state";
+    elements.documents.innerHTML = `
+      <strong>No documents yet</strong>
+      <p class="meta">Use the upload action above to add your first file and start generating notes.</p>
+    `;
     return;
   }
 
@@ -456,26 +464,79 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function formatFileSize(size) {
+  if (!Number.isFinite(size) || size <= 0) {
+    return "Size unavailable";
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function setUploadFeedback(text) {
+  elements.uploadFeedback.textContent = text;
+}
+
+function setUploadBusy(isBusy) {
+  const hasFile = Boolean(elements.uploadInput.files?.length);
+  elements.uploadSubmit.disabled = isBusy || !hasFile;
+  elements.uploadInput.disabled = isBusy;
+  elements.uploadSubmit.textContent = isBusy ? "Starting processing..." : "Start processing document";
+}
+
+function renderUploadSelection() {
+  const selectedFile = elements.uploadInput.files?.[0] ?? null;
+  if (!selectedFile) {
+    elements.uploadSelection.className = "upload-selection empty";
+    elements.uploadSelectionName.textContent = "No file selected yet";
+    elements.uploadSelectionMeta.textContent = "Pick a file to enable processing.";
+    setUploadFeedback("Choose a file first to begin processing.");
+    setUploadBusy(false);
+    return;
+  }
+
+  elements.uploadSelection.className = "upload-selection";
+  elements.uploadSelectionName.textContent = selectedFile.name;
+  elements.uploadSelectionMeta.textContent = `${formatFileSize(selectedFile.size)} • Ready to process`;
+  setUploadFeedback("Ready to start processing.");
+  setUploadBusy(false);
+}
+
+elements.uploadInput.addEventListener("change", () => {
+  renderUploadSelection();
+});
+
 elements.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!elements.uploadInput.files?.length) {
     setStatus("Choose a file first");
     return;
   }
+  const selectedFile = elements.uploadInput.files[0];
+  setUploadBusy(true);
+  setUploadFeedback(`Starting processing for ${selectedFile.name}...`);
   setStatus("Uploading and taking notes...");
   try {
     const formData = new FormData();
-    formData.append("file", elements.uploadInput.files[0]);
+    formData.append("file", selectedFile);
     const documentItem = await api("/api/upload", {
       method: "POST",
       body: formData,
     });
     state.selectedDocumentId = documentItem.id;
     elements.uploadForm.reset();
+    renderUploadSelection();
     await loadDocuments();
     await openDocument(documentItem.id);
+    setUploadFeedback(`Finished ${documentItem.original_name}. Review notes or ask grounded questions.`);
     setStatus(`Finished ${documentItem.original_name}`);
   } catch (error) {
+    setUploadBusy(false);
+    setUploadFeedback(error.message);
     setStatus(error.message);
   }
 });
@@ -536,6 +597,7 @@ elements.clearChat.addEventListener("click", async () => {
 
 try {
   await Promise.all([loadSettingsSummary(), loadDocuments(), loadMessages()]);
+  renderUploadSelection();
   setStatus("Ready");
 } catch (error) {
   setStatus(error.message);

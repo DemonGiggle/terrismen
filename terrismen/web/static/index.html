@@ -25,17 +25,52 @@
 
       <main class="layout">
         <section class="panel">
-          <h2>Upload</h2>
-          <form id="upload-form" class="stack">
-            <label class="upload-drop">
-              <input id="upload-input" name="file" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.text">
-              <span>Select PDF, Word, Excel, or plaintext</span>
-            </label>
-            <button type="submit">Upload and take notes</button>
-          </form>
+          <section class="upload-hero">
+            <div class="upload-hero-copy">
+              <span class="tag">Start here</span>
+              <h2>Upload a document and start processing</h2>
+              <p class="meta">
+                Drop in one file, start processing, then review extracted notes and ask grounded questions from the same workspace.
+              </p>
+            </div>
 
-          <h2>Documents</h2>
-          <div id="documents" class="document-list empty">No documents yet.</div>
+            <form id="upload-form" class="stack upload-stack">
+              <label class="upload-drop">
+                <input id="upload-input" name="file" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.text">
+                <span class="upload-drop-title">Choose or drag in a document</span>
+                <span class="upload-drop-subtitle">PDF, Word, Excel, Markdown, or plaintext</span>
+              </label>
+
+              <div class="upload-helper-grid">
+                <div class="upload-helper-card">
+                  <strong>Supported files</strong>
+                  <p class="meta">.pdf, .doc, .docx, .xls, .xlsx, .txt, .md, .text</p>
+                </div>
+                <div class="upload-helper-card">
+                  <strong>What happens next</strong>
+                  <p class="meta">We ingest the file, generate notes, and make it available for grounded chat.</p>
+                </div>
+              </div>
+
+              <div id="upload-selection" class="upload-selection empty" aria-live="polite">
+                <strong id="upload-selection-name">No file selected yet</strong>
+                <p class="meta" id="upload-selection-meta">Pick a file to enable processing.</p>
+              </div>
+
+              <div class="upload-actions">
+                <button id="upload-submit" type="submit" disabled>Start processing document</button>
+                <p class="meta" id="upload-feedback" aria-live="polite">Choose a file first to begin processing.</p>
+              </div>
+            </form>
+          </section>
+
+          <section class="section-block">
+            <div class="split-header">
+              <h2>Documents</h2>
+              <span class="meta">Processed files appear here</span>
+            </div>
+            <div id="documents" class="document-list empty">No documents yet.</div>
+          </section>
         </section>
 
         <section class="panel panel-wide">

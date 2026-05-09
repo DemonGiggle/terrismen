@@ -234,6 +234,76 @@ button.secondary {
   background: rgba(30, 64, 175, 0.16);
 }
 
+.markdown-content {
+  display: grid;
+  gap: 10px;
+  line-height: 1.55;
+}
+
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content blockquote,
+.markdown-content pre {
+  margin: 0;
+}
+
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5 {
+  color: #f8fafc;
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.markdown-content code {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  padding: 1px 5px;
+  background: rgba(15, 23, 42, 0.65);
+  color: #e0f2fe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content .code-block {
+  overflow-x: auto;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.markdown-content .code-block code {
+  display: block;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: #dbeafe;
+  white-space: pre;
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid rgba(129, 140, 248, 0.75);
+  padding-left: 12px;
+  color: #cbd5e1;
+}
+
+.markdown-content a {
+  color: #93c5fd;
+}
+
 .citations {
   display: flex;
   flex-wrap: wrap;

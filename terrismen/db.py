@@ -96,6 +96,20 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS chat_requests (
+    id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processing',
+    progress_step_name TEXT NOT NULL DEFAULT '',
+    progress_step_index INTEGER NOT NULL DEFAULT 0,
+    progress_step_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    user_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    assistant_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
     note,
     keywords,
@@ -126,6 +140,8 @@ CREATE INDEX IF NOT EXISTS idx_mysteries_source_note ON unresolved_mysteries(sou
 CREATE INDEX IF NOT EXISTS idx_mystery_refs_mystery_rank ON mystery_refs(mystery_id, relation_type, ref_rank);
 CREATE INDEX IF NOT EXISTS idx_mystery_refs_note ON mystery_refs(note_id);
 CREATE INDEX IF NOT EXISTS idx_mystery_refs_source ON mystery_refs(source_id);
+CREATE INDEX IF NOT EXISTS idx_chat_requests_created_at ON chat_requests(created_at);
+
 
 CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
     INSERT INTO notes_fts(rowid, note, keywords) VALUES (new.id, new.note, new.keywords);

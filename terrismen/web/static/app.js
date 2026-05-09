@@ -6,6 +6,9 @@ const state = {
   messages: [],
   documentRefreshTimer: null,
   documentRefreshInFlight: false,
+  activeChatRequestId: null,
+  chatRequestTimer: null,
+  chatRequestInFlight: false,
 };
 
 const elements = {
@@ -24,6 +27,8 @@ const elements = {
   documentMeta: document.querySelector("#document-meta"),
   chatForm: document.querySelector("#chat-form"),
   chatInput: document.querySelector("#chat-input"),
+  chatSubmit: document.querySelector("#chat-submit"),
+  chatProgress: document.querySelector("#chat-progress"),
   chatLog: document.querySelector("#chat-log"),
   clearChat: document.querySelector("#clear-chat"),
 };
@@ -259,6 +264,30 @@ function renderMessages() {
     )
     .join("");
   elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+}
+
+function describeChatProgress(request) {
+  const prefix = request.status === "failed" ? "Failed at" : "Step";
+  return `${prefix} ${request.progress_step_index}/${request.progress_step_count}: ${request.progress_step_name}`;
+}
+
+function renderChatProgress(request) {
+  if (!request) {
+    elements.chatProgress.className = "chat-progress empty";
+    elements.chatProgress.textContent = "Chat request progress will appear here while an answer is running.";
+    return;
+  }
+
+  elements.chatProgress.className = "chat-progress";
+  if (request.status === "failed") {
+    elements.chatProgress.textContent = [describeChatProgress(request), request.error || null].filter(Boolean).join(" • ");
+    return;
+  }
+  if (request.status === "completed") {
+    elements.chatProgress.textContent = "Answer ready";
+    return;
+  }
+  elements.chatProgress.textContent = describeChatProgress(request);
 }
 
 function renderPlainText(value) {
@@ -517,6 +546,13 @@ function setUploadFeedback(text) {
   elements.uploadFeedback.textContent = text;
 }
 
+function setChatBusy(isBusy) {
+  elements.chatInput.disabled = isBusy;
+  elements.chatSubmit.disabled = isBusy;
+  elements.clearChat.disabled = isBusy;
+  elements.chatSubmit.textContent = isBusy ? "Working..." : "Ask";
+}
+
 function setUploadBusy(isBusy) {
   const hasFile = Boolean(elements.uploadInput.files?.length);
   elements.uploadSubmit.disabled = isBusy || !hasFile;
@@ -566,9 +602,52 @@ async function refreshProcessingDocuments() {
   }
 }
 
+function syncChatPolling() {
+  if (state.activeChatRequestId !== null && state.chatRequestTimer === null) {
+    state.chatRequestTimer = window.setInterval(refreshActiveChatRequest, 1200);
+    return;
+  }
+  if (state.activeChatRequestId === null && state.chatRequestTimer !== null) {
+    window.clearInterval(state.chatRequestTimer);
+    state.chatRequestTimer = null;
+  }
+}
+
+async function refreshActiveChatRequest() {
+  if (state.chatRequestInFlight || state.activeChatRequestId === null) {
+    return;
+  }
+  state.chatRequestInFlight = true;
+  try {
+    const request = await api(`/api/chat/${state.activeChatRequestId}`);
+    renderChatProgress(request);
+    if (request.status === "completed") {
+      state.activeChatRequestId = null;
+      syncChatPolling();
+      await loadMessages();
+      setChatBusy(false);
+      setStatus("Answer ready");
+      return;
+    }
+    if (request.status === "failed") {
+      state.activeChatRequestId = null;
+      syncChatPolling();
+      await loadMessages();
+      setChatBusy(false);
+      setStatus(request.error || "Chat request failed");
+      return;
+    }
+  } finally {
+    state.chatRequestInFlight = false;
+  }
+}
+
 window.addEventListener("beforeunload", () => {
   if (state.documentRefreshTimer !== null) {
     window.clearInterval(state.documentRefreshTimer);
+  }
+  if (state.chatRequestTimer !== null) {
+    window.clearInterval(state.chatRequestTimer);
   }
 });
 
@@ -621,29 +700,21 @@ elements.chatForm.addEventListener("submit", async (event) => {
   if (!message) {
     return;
   }
-  setStatus("Asking...");
+  setChatBusy(true);
+  setStatus("Starting chat...");
   try {
-    const userMessage = {
-      id: `local-user-${Date.now()}`,
-      role: "user",
-      content: message,
-      created_at: new Date().toISOString(),
-      citations: [],
-    };
-    state.messages.push(userMessage);
-    renderMessages();
-    elements.chatInput.value = "";
-    const assistant = await api("/api/chat", {
+    const request = await api("/api/chat", {
       method: "POST",
       body: JSON.stringify({ message }),
     });
-    state.messages = await api("/api/messages");
-    if (!state.messages.find((item) => item.id === assistant.id)) {
-      state.messages.push({ ...assistant, role: "assistant", created_at: new Date().toISOString() });
-    }
-    renderMessages();
-    setStatus("Answer ready");
+    elements.chatInput.value = "";
+    state.activeChatRequestId = request.id;
+    renderChatProgress(request);
+    syncChatPolling();
+    await loadMessages();
+    setStatus(describeChatProgress(request));
   } catch (error) {
+    setChatBusy(false);
     setStatus(error.message);
     await loadMessages();
   }
@@ -652,6 +723,10 @@ elements.chatForm.addEventListener("submit", async (event) => {
 elements.clearChat.addEventListener("click", async () => {
   setStatus("Clearing chat...");
   try {
+    state.activeChatRequestId = null;
+    syncChatPolling();
+    setChatBusy(false);
+    renderChatProgress(null);
     await api("/api/messages", { method: "DELETE" });
     state.messages = [];
     renderMessages();
@@ -664,6 +739,7 @@ elements.clearChat.addEventListener("click", async () => {
 try {
   await Promise.all([loadSettingsSummary(), loadDocuments(), loadMessages()]);
   renderUploadSelection();
+  renderChatProgress(null);
   setStatus("Ready");
 } catch (error) {
   setStatus(error.message);

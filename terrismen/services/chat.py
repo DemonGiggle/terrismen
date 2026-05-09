@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import uuid
 from collections import OrderedDict
+from typing import Final
 
-from terrismen.db import utcnow
+from terrismen.config import AppConfig
+from terrismen.db import connect, utcnow
 from terrismen.llm import build_provider
 from terrismen.llm.base import ProviderError
 from terrismen.services.ingestion import load_provider_settings
@@ -22,6 +25,15 @@ ANSWER_PROMPT = """You answer only from the supplied source excerpts and notes.
 - Cite claims inline with square brackets using the supplied reference labels.
 - If the sources are insufficient, say so plainly.
 """
+
+CHAT_PROGRESS_STEPS: Final[tuple[str, ...]] = (
+    "saving user message",
+    "loading recent history",
+    "searching candidate notes",
+    "picking source references",
+    "loading source blocks",
+    "generating final answer",
+)
 
 def recent_messages(connection: sqlite3.Connection, limit: int = 8) -> list[sqlite3.Row]:
     rows = connection.execute(
@@ -211,21 +223,139 @@ def save_message(connection: sqlite3.Connection, role: str, content: str, citati
     return int(cursor.lastrowid)
 
 
-def answer_question(connection: sqlite3.Connection, question: str) -> dict[str, object]:
-    settings = load_provider_settings(connection)
-    if not settings.is_configured():
-        raise ProviderError("Configure a provider before starting chat.")
-    provider = build_provider(settings)
-    history = recent_messages(connection)
-    candidates = search_candidate_notes(connection, question)
-    picked_source_ids = _pick_source_ids(provider, question, history, candidates)
-    if not picked_source_ids:
-        picked_source_ids = list(OrderedDict.fromkeys(candidate["source_id"] for candidate in candidates[:4]))
-    sources = _load_sources(connection, picked_source_ids)
+def update_chat_request_progress(connection: sqlite3.Connection, request_id: str, step_name: str) -> None:
+    connection.execute(
+        """
+        UPDATE chat_requests
+        SET progress_step_name = ?, progress_step_index = ?, progress_step_count = ?
+        WHERE id = ?
+        """,
+        (step_name, CHAT_PROGRESS_STEPS.index(step_name) + 1, len(CHAT_PROGRESS_STEPS), request_id),
+    )
+
+
+def get_chat_request(connection: sqlite3.Connection, request_id: str) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT id, question, status, progress_step_name, progress_step_index, progress_step_count,
+               error, user_message_id, assistant_message_id, created_at, completed_at
+        FROM chat_requests
+        WHERE id = ?
+        """,
+        (request_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def create_chat_request(connection: sqlite3.Connection, question: str) -> dict[str, object]:
+    request_id = uuid.uuid4().hex
+    connection.execute(
+        """
+        INSERT INTO chat_requests (
+            id, question, status, progress_step_name, progress_step_index, progress_step_count,
+            error, user_message_id, assistant_message_id, created_at, completed_at
+        )
+        VALUES (?, ?, 'processing', ?, ?, ?, '', NULL, NULL, ?, NULL)
+        """,
+        (
+            request_id,
+            question,
+            "saving user message",
+            CHAT_PROGRESS_STEPS.index("saving user message") + 1,
+            len(CHAT_PROGRESS_STEPS),
+            utcnow(),
+        ),
+    )
+    user_message_id = save_message(connection, "user", question, [])
+    connection.execute(
+        """
+        UPDATE chat_requests
+        SET user_message_id = ?, progress_step_name = ?, progress_step_index = ?, progress_step_count = ?
+        WHERE id = ?
+        """,
+        (
+            user_message_id,
+            "loading recent history",
+            CHAT_PROGRESS_STEPS.index("loading recent history") + 1,
+            len(CHAT_PROGRESS_STEPS),
+            request_id,
+        ),
+    )
+    connection.commit()
+    return get_chat_request(connection, request_id) or {}
+
+
+def continue_chat_request(config: AppConfig, request_id: str) -> None:
+    with connect(config.database_path) as connection:
+        _continue_chat_request(connection, request_id)
+
+
+def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> None:
+    request = get_chat_request(connection, request_id)
+    if request is None:
+        return
+    question = str(request["question"])
+    try:
+        settings = load_provider_settings(connection)
+        if not settings.is_configured():
+            raise ProviderError("Configure a provider before starting chat.")
+
+        update_chat_request_progress(connection, request_id, "loading recent history")
+        connection.commit()
+        history = recent_messages(connection)
+        provider = build_provider(settings)
+
+        update_chat_request_progress(connection, request_id, "searching candidate notes")
+        connection.commit()
+        candidates = search_candidate_notes(connection, question)
+
+        update_chat_request_progress(connection, request_id, "picking source references")
+        connection.commit()
+        picked_source_ids = _pick_source_ids(provider, question, history, candidates)
+        if not picked_source_ids:
+            picked_source_ids = list(OrderedDict.fromkeys(candidate["source_id"] for candidate in candidates[:4]))
+
+        update_chat_request_progress(connection, request_id, "loading source blocks")
+        connection.commit()
+        sources = _load_sources(connection, picked_source_ids)
+
+        update_chat_request_progress(connection, request_id, "generating final answer")
+        connection.commit()
+        answer, citations = _generate_answer(provider, history, question, sources)
+        assistant_id = save_message(connection, "assistant", answer, citations)
+        connection.execute(
+            """
+            UPDATE chat_requests
+            SET status = 'completed', assistant_message_id = ?, completed_at = ?,
+                progress_step_name = ?, progress_step_index = ?, progress_step_count = ?, error = ''
+            WHERE id = ?
+            """,
+            (
+                assistant_id,
+                utcnow(),
+                "generating final answer",
+                len(CHAT_PROGRESS_STEPS),
+                len(CHAT_PROGRESS_STEPS),
+                request_id,
+            ),
+        )
+        connection.commit()
+    except Exception as exc:
+        connection.execute(
+            "UPDATE chat_requests SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
+            (str(exc), utcnow(), request_id),
+        )
+        connection.commit()
+
+
+def _generate_answer(
+    provider,
+    history: list[sqlite3.Row],
+    question: str,
+    sources: list[sqlite3.Row],
+) -> tuple[str, list[dict[str, object]]]:
     if not sources:
-        answer = "I could not find relevant notes or source excerpts for that question yet."
-        assistant_id = save_message(connection, "assistant", answer, [])
-        return {"id": assistant_id, "content": answer, "citations": []}
+        return "I could not find relevant notes or source excerpts for that question yet.", []
 
     source_blocks = []
     citations: list[dict[str, object]] = []
@@ -256,5 +386,20 @@ def answer_question(connection: sqlite3.Connection, question: str) -> dict[str, 
             f"Supporting material:\n\n" + "\n\n---\n\n".join(source_blocks)
         ),
     )
+    return answer, citations
+
+
+def answer_question(connection: sqlite3.Connection, question: str) -> dict[str, object]:
+    settings = load_provider_settings(connection)
+    if not settings.is_configured():
+        raise ProviderError("Configure a provider before starting chat.")
+    provider = build_provider(settings)
+    history = recent_messages(connection)
+    candidates = search_candidate_notes(connection, question)
+    picked_source_ids = _pick_source_ids(provider, question, history, candidates)
+    if not picked_source_ids:
+        picked_source_ids = list(OrderedDict.fromkeys(candidate["source_id"] for candidate in candidates[:4]))
+    sources = _load_sources(connection, picked_source_ids)
+    answer, citations = _generate_answer(provider, history, question, sources)
     assistant_id = save_message(connection, "assistant", answer, citations)
     return {"id": assistant_id, "content": answer, "citations": citations}

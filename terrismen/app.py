@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from terrismen.config import AppConfig, load_config
 from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
-from terrismen.services.chat import answer_question, save_message
+from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
 from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion
 from terrismen.services.notes import build_reference_label
 from terrismen.services.parsers import ParserError
@@ -220,12 +220,21 @@ def upload_document(
 
 
 @app.post("/api/chat")
-def chat(payload: ChatRequest, connection=Depends(get_connection)) -> dict[str, object]:
-    save_message(connection, "user", payload.message, [])
+def chat(payload: ChatRequest, background_tasks: BackgroundTasks, connection=Depends(get_connection)) -> dict[str, object]:
     try:
-        return answer_question(connection, payload.message)
+        request_payload = create_chat_request(connection, payload.message)
+        background_tasks.add_task(continue_chat_request, config, request_payload["id"])
+        return request_payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/chat/{request_id}")
+def chat_request_status(request_id: str, connection=Depends(get_connection)) -> dict[str, object]:
+    payload = get_chat_request(connection, request_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Chat request not found")
+    return payload
 
 
 def main() -> None:

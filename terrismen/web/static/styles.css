@@ -235,6 +235,65 @@ button.secondary,
   flex-direction: column;
 }
 
+.source-card-collapsible {
+  padding: 0;
+  overflow: hidden;
+}
+
+.source-card-collapsible[open] {
+  border-color: rgba(129, 140, 248, 0.45);
+  background: rgba(67, 56, 202, 0.14);
+}
+
+.source-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.source-summary:focus-visible {
+  outline: 2px solid rgba(129, 140, 248, 0.8);
+  outline-offset: -2px;
+}
+
+.source-summary-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-preview {
+  color: #e2e8f0;
+  line-height: 1.45;
+}
+
+.source-expanded {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.source-toggle-open {
+  display: none;
+}
+
+.source-card-collapsible[open] .source-toggle-closed {
+  display: none;
+}
+
+.source-card-collapsible[open] .source-toggle-open {
+  display: inline;
+}
+
 .source-card pre,
 .mystery-card pre {
   white-space: pre-wrap;

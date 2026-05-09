@@ -66,6 +66,19 @@ function renderReferenceTags(references) {
     .join("")}</div>`;
 }
 
+function summarizeSourceNote(note) {
+  const preview = String(note || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  if (!preview) {
+    return "No note generated";
+  }
+
+  return preview.length > 160 ? `${preview.slice(0, 157)}...` : preview;
+}
+
 function renderMysteries(mysteries) {
   if (!mysteries?.length) {
     return "";
@@ -115,22 +128,33 @@ function renderSources(sources) {
       ${sources
         .map(
           (source) => `
-            <article class="source-card">
-              <div class="split-header">
-                <strong>${escapeHtml(source.locator)}</strong>
-                ${source.page_number ? `<span class="tag">Ref ${source.page_number}</span>` : ""}
+            <details class="source-card source-card-collapsible">
+              <summary class="source-summary">
+                <div class="source-summary-copy">
+                  <div class="split-header">
+                    <strong>${escapeHtml(source.locator)}</strong>
+                    ${source.page_number ? `<span class="tag">Ref ${source.page_number}</span>` : ""}
+                  </div>
+                  <div class="source-preview">${escapeHtml(summarizeSourceNote(source.note))}</div>
+                  <div class="meta">${escapeHtml(source.keywords || "No keywords extracted")}</div>
+                </div>
+                <span class="tag source-toggle-label">
+                  <span class="source-toggle-closed">Open note</span>
+                  <span class="source-toggle-open">Close note</span>
+                </span>
+              </summary>
+              <div class="source-expanded">
+                <h3>Full note</h3>
+                <pre>${escapeHtml(source.note || "No note generated")}</pre>
+                <h3>Source excerpt</h3>
+                <pre>${escapeHtml(source.content || "[no text extracted]")}</pre>
+                ${
+                  source.image_summary
+                    ? `<h3>Image summary</h3><pre>${escapeHtml(source.image_summary)}</pre>`
+                    : ""
+                }
               </div>
-              <div class="meta">${escapeHtml(source.keywords || "No keywords extracted")}</div>
-              <h3>Note</h3>
-              <pre>${escapeHtml(source.note || "No note generated")}</pre>
-              <h3>Source excerpt</h3>
-              <pre>${escapeHtml(source.content || "[no text extracted]")}</pre>
-              ${
-                source.image_summary
-                  ? `<h3>Image summary</h3><pre>${escapeHtml(source.image_summary)}</pre>`
-                  : ""
-              }
-            </article>
+            </details>
           `,
         )
         .join("")}

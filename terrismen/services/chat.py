@@ -10,6 +10,7 @@ from terrismen.llm import build_provider
 from terrismen.llm.base import ProviderError
 from terrismen.services.ingestion import load_provider_settings
 from terrismen.services.notes import build_reference_label
+from terrismen.services.retrieval import build_fts_query
 
 
 REFERENCE_PICKER_PROMPT = """You choose which source references are relevant for answering a user question.
@@ -22,18 +23,6 @@ ANSWER_PROMPT = """You answer only from the supplied source excerpts and notes.
 - If the sources are insufficient, say so plainly.
 """
 
-
-def _question_terms(question: str) -> list[str]:
-    return [term for term in re.findall(r"[A-Za-z0-9_]{2,}", question.lower()) if term not in {"the", "and", "for"}]
-
-
-def _fts_query(question: str) -> str | None:
-    terms = list(OrderedDict.fromkeys(_question_terms(question)))
-    if not terms:
-        return None
-    return " OR ".join(terms[:10])
-
-
 def recent_messages(connection: sqlite3.Connection, limit: int = 8) -> list[sqlite3.Row]:
     rows = connection.execute(
         "SELECT id, role, content, citations_json, created_at FROM messages ORDER BY id DESC LIMIT ?",
@@ -42,8 +31,8 @@ def recent_messages(connection: sqlite3.Connection, limit: int = 8) -> list[sqli
     return list(reversed(rows))
 
 
-def search_candidate_notes(connection: sqlite3.Connection, question: str, limit: int = 6) -> list[sqlite3.Row]:
-    fts_query = _fts_query(question)
+def _search_note_rows(connection: sqlite3.Connection, question: str, limit: int) -> list[dict[str, object]]:
+    fts_query = build_fts_query(question)
     if fts_query:
         rows = connection.execute(
             """
@@ -60,9 +49,9 @@ def search_candidate_notes(connection: sqlite3.Connection, question: str, limit:
             (fts_query, limit),
         ).fetchall()
         if rows:
-            return rows
+            return [dict(row) for row in rows]
     like_pattern = f"%{question[:120]}%"
-    return connection.execute(
+    rows = connection.execute(
         """
         SELECT notes.id, notes.note, notes.keywords, notes.source_id, sources.content, sources.locator, sources.page_number,
                documents.original_name
@@ -75,6 +64,85 @@ def search_candidate_notes(connection: sqlite3.Connection, question: str, limit:
         """,
         (like_pattern, like_pattern, limit),
     ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _search_mystery_rows(connection: sqlite3.Connection, question: str, limit: int) -> list[dict[str, object]]:
+    fts_query = build_fts_query(question)
+    if fts_query:
+        rows = connection.execute(
+            """
+            SELECT unresolved_mysteries.id,
+                   CASE
+                       WHEN unresolved_mysteries.status = 'resolved' THEN
+                           'Mystery resolution: ' || unresolved_mysteries.resolution_summary || '\nOriginal mystery: ' || unresolved_mysteries.question
+                       ELSE
+                           'Unresolved mystery: ' || unresolved_mysteries.question || '\nWhy uncertain: ' || unresolved_mysteries.reason
+                   END AS note,
+                   unresolved_mysteries.keywords,
+                   COALESCE(unresolved_mysteries.resolution_source_id, unresolved_mysteries.source_id) AS source_id,
+                   COALESCE(resolution_sources.content, origin_sources.content) AS content,
+                   COALESCE(resolution_sources.locator, origin_sources.locator) AS locator,
+                   COALESCE(resolution_sources.page_number, origin_sources.page_number) AS page_number,
+                   documents.original_name
+            FROM unresolved_mysteries_fts
+            JOIN unresolved_mysteries ON unresolved_mysteries_fts.rowid = unresolved_mysteries.id
+            JOIN documents ON documents.id = unresolved_mysteries.document_id
+            LEFT JOIN sources origin_sources ON origin_sources.id = unresolved_mysteries.source_id
+            LEFT JOIN sources resolution_sources ON resolution_sources.id = unresolved_mysteries.resolution_source_id
+            WHERE unresolved_mysteries_fts MATCH ?
+            ORDER BY CASE unresolved_mysteries.status WHEN 'resolved' THEN 0 ELSE 1 END, bm25(unresolved_mysteries_fts)
+            LIMIT ?
+            """,
+            (fts_query, limit),
+        ).fetchall()
+        if rows:
+            return [dict(row) for row in rows]
+
+    like_pattern = f"%{question[:120]}%"
+    rows = connection.execute(
+        """
+        SELECT unresolved_mysteries.id,
+               CASE
+                   WHEN unresolved_mysteries.status = 'resolved' THEN
+                       'Mystery resolution: ' || unresolved_mysteries.resolution_summary || '\nOriginal mystery: ' || unresolved_mysteries.question
+                   ELSE
+                       'Unresolved mystery: ' || unresolved_mysteries.question || '\nWhy uncertain: ' || unresolved_mysteries.reason
+               END AS note,
+               unresolved_mysteries.keywords,
+               COALESCE(unresolved_mysteries.resolution_source_id, unresolved_mysteries.source_id) AS source_id,
+               COALESCE(resolution_sources.content, origin_sources.content) AS content,
+               COALESCE(resolution_sources.locator, origin_sources.locator) AS locator,
+               COALESCE(resolution_sources.page_number, origin_sources.page_number) AS page_number,
+               documents.original_name
+        FROM unresolved_mysteries
+        JOIN documents ON documents.id = unresolved_mysteries.document_id
+        LEFT JOIN sources origin_sources ON origin_sources.id = unresolved_mysteries.source_id
+        LEFT JOIN sources resolution_sources ON resolution_sources.id = unresolved_mysteries.resolution_source_id
+        WHERE unresolved_mysteries.question LIKE ?
+           OR unresolved_mysteries.reason LIKE ?
+           OR unresolved_mysteries.resolution_summary LIKE ?
+        ORDER BY CASE unresolved_mysteries.status WHEN 'resolved' THEN 0 ELSE 1 END, unresolved_mysteries.id DESC
+        LIMIT ?
+        """,
+        (like_pattern, like_pattern, like_pattern, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def search_candidate_notes(connection: sqlite3.Connection, question: str, limit: int = 6) -> list[dict[str, object]]:
+    combined = _search_note_rows(connection, question, limit) + _search_mystery_rows(connection, question, limit)
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[object, object]] = set()
+    for row in combined:
+        key = (row.get("source_id"), row.get("note"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def _extract_json_block(text: str) -> dict[str, object]:
@@ -87,7 +155,7 @@ def _extract_json_block(text: str) -> dict[str, object]:
         return json.loads(match.group(0))
 
 
-def _pick_source_ids(provider, question: str, history: list[sqlite3.Row], candidates: list[sqlite3.Row]) -> list[int]:
+def _pick_source_ids(provider, question: str, history: list[sqlite3.Row], candidates: list[dict[str, object]]) -> list[int]:
     if not candidates:
         return []
     candidate_lines = []

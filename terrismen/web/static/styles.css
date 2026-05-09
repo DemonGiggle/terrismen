@@ -27,7 +27,8 @@ body {
 .split-header,
 .document-card,
 .message,
-.source-card {
+.source-card,
+.mystery-card {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -158,6 +159,7 @@ button.secondary {
 
 .document-card,
 .source-card,
+.mystery-card,
 .message {
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 16px;
@@ -185,16 +187,33 @@ button.secondary {
   overflow: auto;
 }
 
-.source-card {
+.detail-section {
+  display: grid;
+  gap: 12px;
+}
+
+.source-card,
+.mystery-card {
   flex-direction: column;
 }
 
-.source-card pre {
+.source-card pre,
+.mystery-card pre {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   color: #dbe4ff;
+}
+
+.mystery-card.open {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(120, 53, 15, 0.16);
+}
+
+.mystery-card.resolved {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(6, 78, 59, 0.16);
 }
 
 .chat-log {

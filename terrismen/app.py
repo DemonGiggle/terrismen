@@ -15,6 +15,7 @@ from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import answer_question, save_message
 from terrismen.services.ingestion import ingest_document
+from terrismen.services.notes import build_reference_label
 from terrismen.services.parsers import ParserError
 
 
@@ -44,6 +45,34 @@ def serialize_message(row) -> dict[str, object]:
     payload = row_to_dict(row) or {}
     payload["citations"] = payload.pop("citations_json", [])
     return payload
+
+
+def serialize_mystery_refs(connection, mystery_ids: list[int], document_name: str) -> dict[int, list[dict[str, object]]]:
+    if not mystery_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in mystery_ids)
+    rows = connection.execute(
+        f"""
+        SELECT mystery_refs.mystery_id, mystery_refs.relation_type, mystery_refs.ref_rank, mystery_refs.why_relevant, mystery_refs.note_id,
+               COALESCE(mystery_refs.source_id, note_sources.id) AS source_id,
+               COALESCE(source_refs.locator, note_sources.locator) AS locator,
+               COALESCE(source_refs.page_number, note_sources.page_number) AS page_number
+        FROM mystery_refs
+        LEFT JOIN notes reference_notes ON reference_notes.id = mystery_refs.note_id
+        LEFT JOIN sources note_sources ON note_sources.id = reference_notes.source_id
+        LEFT JOIN sources source_refs ON source_refs.id = mystery_refs.source_id
+        WHERE mystery_refs.mystery_id IN ({placeholders})
+        ORDER BY mystery_refs.mystery_id, mystery_refs.relation_type, mystery_refs.ref_rank, mystery_refs.id
+        """,
+        mystery_ids,
+    ).fetchall()
+
+    grouped: dict[int, list[dict[str, object]]] = {}
+    for row in rows:
+        item = dict(row)
+        item["reference_label"] = build_reference_label(document_name, item["locator"], item["page_number"])
+        grouped.setdefault(int(item["mystery_id"]), []).append(item)
+    return grouped
 
 
 @app.get("/")
@@ -83,11 +112,11 @@ def list_documents(connection=Depends(get_connection)) -> list[dict[str, object]
     rows = connection.execute(
         """
         SELECT documents.id, documents.original_name, documents.kind, documents.status, documents.error, documents.created_at,
-               COUNT(DISTINCT sources.id) AS source_count, COUNT(DISTINCT notes.id) AS note_count
+               (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
+               (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id) AS mystery_count,
+               (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id AND unresolved_mysteries.status = 'open') AS open_mystery_count
         FROM documents
-        LEFT JOIN sources ON sources.document_id = documents.id
-        LEFT JOIN notes ON notes.document_id = documents.id
-        GROUP BY documents.id
         ORDER BY documents.id DESC
         """
     ).fetchall()
@@ -118,6 +147,29 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
     ).fetchall()
     payload = row_to_dict(document) or {}
     payload["sources"] = [row_to_dict(row) for row in sources if row is not None]
+    mysteries = connection.execute(
+        """
+        SELECT unresolved_mysteries.id, unresolved_mysteries.question, unresolved_mysteries.reason, unresolved_mysteries.keywords,
+               unresolved_mysteries.status, unresolved_mysteries.resolution_summary, unresolved_mysteries.created_at,
+               unresolved_mysteries.resolved_at, origin_sources.locator AS origin_locator, origin_sources.page_number AS origin_page_number
+        FROM unresolved_mysteries
+        JOIN sources origin_sources ON origin_sources.id = unresolved_mysteries.source_id
+        WHERE unresolved_mysteries.document_id = ?
+        ORDER BY unresolved_mysteries.id
+        """,
+        (document_id,),
+    ).fetchall()
+    mystery_refs = serialize_mystery_refs(connection, [int(row["id"]) for row in mysteries], payload["original_name"])
+    payload["mysteries"] = []
+    for row in mysteries:
+        item = dict(row)
+        item["origin_reference_label"] = build_reference_label(
+            payload["original_name"],
+            item["origin_locator"],
+            item["origin_page_number"],
+        )
+        item["references"] = mystery_refs.get(int(item["id"]), [])
+        payload["mysteries"].append(item)
     return payload
 
 

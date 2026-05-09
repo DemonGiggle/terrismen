@@ -58,6 +58,33 @@ CREATE TABLE IF NOT EXISTS notes (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS unresolved_mysteries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    keywords TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    resolution_summary TEXT NOT NULL DEFAULT '',
+    resolution_note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+    resolution_source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mystery_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mystery_id INTEGER NOT NULL REFERENCES unresolved_mysteries(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    note_id INTEGER REFERENCES notes(id) ON DELETE CASCADE,
+    source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+    ref_rank INTEGER NOT NULL DEFAULT 0,
+    why_relevant TEXT NOT NULL DEFAULT '',
+    CHECK (note_id IS NOT NULL OR source_id IS NOT NULL)
+);
+
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL,
@@ -79,6 +106,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts USING fts5(
     content='sources',
     content_rowid='id'
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS unresolved_mysteries_fts USING fts5(
+    question,
+    reason,
+    keywords,
+    resolution_summary,
+    content='unresolved_mysteries',
+    content_rowid='id'
+);
+
+CREATE INDEX IF NOT EXISTS idx_sources_document_page ON sources(document_id, page_number);
+CREATE INDEX IF NOT EXISTS idx_notes_document_source ON notes(document_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_mysteries_document_status ON unresolved_mysteries(document_id, status);
+CREATE INDEX IF NOT EXISTS idx_mysteries_source_note ON unresolved_mysteries(source_id, note_id);
+CREATE INDEX IF NOT EXISTS idx_mystery_refs_mystery_rank ON mystery_refs(mystery_id, relation_type, ref_rank);
+CREATE INDEX IF NOT EXISTS idx_mystery_refs_note ON mystery_refs(note_id);
+CREATE INDEX IF NOT EXISTS idx_mystery_refs_source ON mystery_refs(source_id);
 
 CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
     INSERT INTO notes_fts(rowid, note, keywords) VALUES (new.id, new.note, new.keywords);
@@ -104,6 +148,23 @@ END;
 CREATE TRIGGER IF NOT EXISTS sources_au AFTER UPDATE ON sources BEGIN
     INSERT INTO sources_fts(sources_fts, rowid, content, locator) VALUES ('delete', old.id, old.content, old.locator);
     INSERT INTO sources_fts(rowid, content, locator) VALUES (new.id, new.content, new.locator);
+END;
+
+CREATE TRIGGER IF NOT EXISTS unresolved_mysteries_ai AFTER INSERT ON unresolved_mysteries BEGIN
+    INSERT INTO unresolved_mysteries_fts(rowid, question, reason, keywords, resolution_summary)
+    VALUES (new.id, new.question, new.reason, new.keywords, new.resolution_summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS unresolved_mysteries_ad AFTER DELETE ON unresolved_mysteries BEGIN
+    INSERT INTO unresolved_mysteries_fts(unresolved_mysteries_fts, rowid, question, reason, keywords, resolution_summary)
+    VALUES ('delete', old.id, old.question, old.reason, old.keywords, old.resolution_summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS unresolved_mysteries_au AFTER UPDATE ON unresolved_mysteries BEGIN
+    INSERT INTO unresolved_mysteries_fts(unresolved_mysteries_fts, rowid, question, reason, keywords, resolution_summary)
+    VALUES ('delete', old.id, old.question, old.reason, old.keywords, old.resolution_summary);
+    INSERT INTO unresolved_mysteries_fts(rowid, question, reason, keywords, resolution_summary)
+    VALUES (new.id, new.question, new.reason, new.keywords, new.resolution_summary);
 END;
 """
 

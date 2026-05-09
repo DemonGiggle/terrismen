@@ -54,12 +54,93 @@ function renderDocuments() {
             <strong>${escapeHtml(documentItem.original_name)}</strong>
             <span class="tag">${escapeHtml(documentItem.status)}</span>
           </div>
-          <div class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes</div>
+          <div class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</div>
           ${documentItem.error ? `<div class="meta">${escapeHtml(documentItem.error)}</div>` : ""}
         </button>
       `;
     })
     .join("");
+}
+
+function renderReferenceTags(references) {
+  if (!references?.length) {
+    return "";
+  }
+  return `<div class="citations">${references
+    .map((reference) => `<span class="tag">${escapeHtml(reference.reference_label)}</span>`)
+    .join("")}</div>`;
+}
+
+function renderMysteries(mysteries) {
+  if (!mysteries?.length) {
+    return "";
+  }
+  return `
+    <section class="detail-section">
+      <div class="split-header">
+        <h3>Unresolved mysteries</h3>
+        <span class="meta">${mysteries.length} tracked</span>
+      </div>
+      ${mysteries
+        .map(
+          (mystery) => `
+            <article class="mystery-card ${escapeHtml(mystery.status)}">
+              <div class="split-header">
+                <strong>${escapeHtml(mystery.question)}</strong>
+                <span class="tag">${escapeHtml(mystery.status)}</span>
+              </div>
+              <div class="meta">Origin ${escapeHtml(mystery.origin_reference_label)}</div>
+              ${mystery.keywords ? `<div class="meta">${escapeHtml(mystery.keywords)}</div>` : ""}
+              <h3>Why it was uncertain</h3>
+              <pre>${escapeHtml(mystery.reason || "No reason recorded")}</pre>
+              ${
+                mystery.resolution_summary
+                  ? `<h3>${mystery.status === "resolved" ? "Resolution" : "Current review"}</h3><pre>${escapeHtml(mystery.resolution_summary)}</pre>`
+                  : ""
+              }
+              ${renderReferenceTags(mystery.references)}
+            </article>
+          `,
+        )
+        .join("")}
+    </section>
+  `;
+}
+
+function renderSources(sources) {
+  if (!sources?.length) {
+    return "";
+  }
+  return `
+    <section class="detail-section">
+      <div class="split-header">
+        <h3>Source notes</h3>
+        <span class="meta">${sources.length} extracted units</span>
+      </div>
+      ${sources
+        .map(
+          (source) => `
+            <article class="source-card">
+              <div class="split-header">
+                <strong>${escapeHtml(source.locator)}</strong>
+                ${source.page_number ? `<span class="tag">Ref ${source.page_number}</span>` : ""}
+              </div>
+              <div class="meta">${escapeHtml(source.keywords || "No keywords extracted")}</div>
+              <h3>Note</h3>
+              <pre>${escapeHtml(source.note || "No note generated")}</pre>
+              <h3>Source excerpt</h3>
+              <pre>${escapeHtml(source.content || "[no text extracted]")}</pre>
+              ${
+                source.image_summary
+                  ? `<h3>Image summary</h3><pre>${escapeHtml(source.image_summary)}</pre>`
+                  : ""
+              }
+            </article>
+          `,
+        )
+        .join("")}
+    </section>
+  `;
 }
 
 function renderDocumentDetail(documentItem) {
@@ -70,35 +151,18 @@ function renderDocumentDetail(documentItem) {
     return;
   }
 
-  elements.documentMeta.textContent = `${documentItem.kind || "unknown"} • ${documentItem.status}`;
-  if (!documentItem.sources?.length) {
+  const sources = documentItem.sources || [];
+  const mysteries = documentItem.mysteries || [];
+  elements.documentMeta.textContent = `${documentItem.kind || "unknown"} • ${documentItem.status} • ${sources.length} sources • ${mysteries.length} mysteries`;
+  if (!sources.length && !mysteries.length) {
     elements.detail.className = "detail empty";
-    elements.detail.textContent = "This document does not have extracted sources yet.";
+    elements.detail.textContent = "This document does not have extracted notes or mysteries yet.";
     return;
   }
 
   elements.detail.className = "detail";
-  elements.detail.innerHTML = documentItem.sources
-    .map(
-      (source) => `
-        <article class="source-card">
-          <div class="split-header">
-            <strong>${escapeHtml(source.locator)}</strong>
-            ${source.page_number ? `<span class="tag">Ref ${source.page_number}</span>` : ""}
-          </div>
-          <div class="meta">${escapeHtml(source.keywords || "No keywords extracted")}</div>
-          <h3>Note</h3>
-          <pre>${escapeHtml(source.note || "No note generated")}</pre>
-          <h3>Source excerpt</h3>
-          <pre>${escapeHtml(source.content || "[no text extracted]")}</pre>
-          ${
-            source.image_summary
-              ? `<h3>Image summary</h3><pre>${escapeHtml(source.image_summary)}</pre>`
-              : ""
-          }
-        </article>
-      `,
-    )
+  elements.detail.innerHTML = [renderMysteries(mysteries), renderSources(sources)]
+    .filter(Boolean)
     .join("");
 }
 

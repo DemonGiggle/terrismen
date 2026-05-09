@@ -16,6 +16,8 @@ Snapshot of the web UI showing saved provider settings, a processed document wit
 - PDF parsing with exact page references
 - DOCX, DOC, XLSX, XLS, and plaintext parsing with stable locators
 - Image forwarding to the configured model for multimodal note enrichment
+- Page-level unresolved mystery capture for ambiguous or incomplete content
+- End-of-document mystery review that links resolutions back to indexed notes and source references
 - Grounded chat flow that cites the referenced source locations
 - Local SQLite persistence for documents, sources, notes, and chat history
 
@@ -28,8 +30,9 @@ Snapshot of the web UI showing saved provider settings, a processed document wit
    - DOCX, DOC, and plaintext become chunked source units
    - Excel files become sheet/row-range source units
 4. If images are found in supported formats, they are sent to the configured model and described.
-5. Each source unit plus any image descriptions is sent to the model to generate retrieval-friendly notes.
-6. During chat, `terrismen` searches the stored notes, asks the model to pick the most relevant references, then answers from the original source excerpts and chat history.
+5. Each source unit plus any image descriptions is sent to the model to generate retrieval-friendly notes and unresolved mysteries when the page remains ambiguous.
+6. After the full document is read, `terrismen` revisits every unresolved mystery, searches indexed notes and source excerpts, and stores any grounded resolutions with direct note/source references.
+7. During chat, `terrismen` searches the stored notes and mystery resolutions, asks the model to pick the most relevant references, then answers from the original source excerpts and chat history.
 
 ## Requirements
 

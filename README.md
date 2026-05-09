@@ -6,8 +6,6 @@
 
 ![terrismen app snapshot](assets/terrismen-snapshot.png)
 
-Snapshot of the web UI showing saved provider settings, a processed document with detailed notes and source excerpts, and grounded chat citations rendered from stored references.
-
 ## Features
 
 - Web UI for provider settings, uploads, note browsing, and chat

@@ -145,8 +145,11 @@ async function loadSettings() {
 async function loadDocuments() {
   state.documents = await api("/api/documents");
   renderDocuments();
-  if (state.selectedDocumentId) {
-    await openDocument(state.selectedDocumentId);
+  const targetDocumentId = state.selectedDocumentId ?? state.documents[0]?.id ?? null;
+  if (targetDocumentId !== null) {
+    await openDocument(targetDocumentId);
+  } else {
+    renderDocumentDetail(null);
   }
 }
 

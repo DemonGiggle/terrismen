@@ -2,6 +2,12 @@
 
 `terrismen` is a document-grounded note taking and chat application with a browser UI. It ingests uploaded files, reads them page-by-page or chunk-by-chunk, creates dense notes through an LLM, and answers follow-up questions using both the generated notes and the original source excerpts.
 
+## App snapshot
+
+![terrismen app snapshot](assets/terrismen-snapshot.png)
+
+Snapshot of the web UI showing saved provider settings, a processed document with detailed notes and source excerpts, and grounded chat citations rendered from stored references.
+
 ## Features
 
 - Web UI for provider settings, uploads, note browsing, and chat

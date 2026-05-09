@@ -40,6 +40,12 @@ def get_connection() -> Iterator:
         connection.close()
 
 
+def serialize_message(row) -> dict[str, object]:
+    payload = row_to_dict(row) or {}
+    payload["citations"] = payload.pop("citations_json", [])
+    return payload
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "web" / "static" / "index.html")
@@ -120,7 +126,7 @@ def list_messages(connection=Depends(get_connection)) -> list[dict[str, object]]
     rows = connection.execute(
         "SELECT id, role, content, citations_json, created_at FROM messages ORDER BY id ASC"
     ).fetchall()
-    return [row_to_dict(row) for row in rows if row is not None]
+    return [serialize_message(row) for row in rows if row is not None]
 
 
 @app.delete("/api/messages")

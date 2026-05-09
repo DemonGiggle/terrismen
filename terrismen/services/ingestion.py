@@ -5,14 +5,25 @@ import sqlite3
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from typing import Final
 
 from terrismen.config import AppConfig
-from terrismen.db import utcnow
+from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
 from terrismen.llm.base import ProviderError
 from terrismen.services.notes import MysteryDraft, describe_images, generate_note, resolve_mystery
 from terrismen.services.parsers import ParserError, parse_document
 from terrismen.services.retrieval import build_fts_query
+
+INGESTION_STEPS: Final[tuple[str, ...]] = (
+    "validating provider/settings",
+    "storing upload",
+    "parsing document",
+    "describing images",
+    "generating notes",
+    "resolving mysteries",
+    "finalizing document",
+)
 
 
 def file_extension(name: str) -> str:
@@ -33,6 +44,17 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
         model=row["model"],
         api_key=row["api_key"],
         temperature=row["temperature"],
+    )
+
+
+def update_document_progress(connection: sqlite3.Connection, document_id: int, step_name: str) -> None:
+    connection.execute(
+        """
+        UPDATE documents
+        SET progress_step_name = ?, progress_step_index = ?, progress_step_count = ?
+        WHERE id = ?
+        """,
+        (step_name, INGESTION_STEPS.index(step_name) + 1, len(INGESTION_STEPS), document_id),
     )
 
 
@@ -210,7 +232,7 @@ def _resolve_document_mysteries(
         )
 
 
-def ingest_document(
+def create_document_ingestion(
     connection: sqlite3.Connection,
     config: AppConfig,
     *,
@@ -230,18 +252,56 @@ def ingest_document(
 
     cursor = connection.execute(
         """
-        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
-        VALUES (?, ?, ?, '', 'processing', '', ?)
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status,
+            progress_step_name, progress_step_index, progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, '', 'processing', ?, ?, ?, '', ?)
         """,
-        (original_name, str(stored_path), media_type or "application/octet-stream", utcnow()),
+        (
+            original_name,
+            str(stored_path),
+            media_type or "application/octet-stream",
+            "parsing document",
+            INGESTION_STEPS.index("parsing document") + 1,
+            len(INGESTION_STEPS),
+            utcnow(),
+        ),
     )
     document_id = int(cursor.lastrowid)
     connection.commit()
+    return document_id
 
+
+def continue_document_ingestion(config: AppConfig, document_id: int) -> None:
+    with connect(config.database_path) as connection:
+        _continue_document_ingestion(connection, config, document_id=document_id)
+
+
+def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConfig, *, document_id: int) -> None:
     try:
+        document_row = connection.execute(
+            """
+            SELECT id, original_name, stored_path, media_type
+            FROM documents
+            WHERE id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+        if document_row is None:
+            return
+        original_name = document_row["original_name"]
+        stored_path = Path(document_row["stored_path"])
+        settings = load_provider_settings(connection)
+        update_document_progress(connection, document_id, "parsing document")
+        connection.commit()
         kind, parsed_sources = parse_document(stored_path, config.images_dir)
+        update_document_progress(connection, document_id, "describing images")
+        connection.commit()
         provider = build_provider(settings)
         connection.execute("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
+        update_document_progress(connection, document_id, "generating notes")
+        connection.commit()
 
         for source in parsed_sources:
             source_cursor = connection.execute(
@@ -291,11 +351,15 @@ def ingest_document(
                     draft=mystery,
                 )
 
-        _resolve_document_mysteries(connection, provider=provider, document_id=document_id, document_name=original_name)
-        connection.execute("UPDATE documents SET status = 'ready', error = '' WHERE id = ?", (document_id,))
+        update_document_progress(connection, document_id, "resolving mysteries")
         connection.commit()
-        return document_id
+        _resolve_document_mysteries(connection, provider=provider, document_id=document_id, document_name=original_name)
+        update_document_progress(connection, document_id, "finalizing document")
+        connection.execute(
+            "UPDATE documents SET status = 'ready', error = '', progress_step_name = ?, progress_step_index = ?, progress_step_count = ? WHERE id = ?",
+            ("finalizing document", len(INGESTION_STEPS), len(INGESTION_STEPS), document_id),
+        )
+        connection.commit()
     except Exception as exc:
         connection.execute("UPDATE documents SET status = 'failed', error = ? WHERE id = ?", (str(exc), document_id))
         connection.commit()
-        raise

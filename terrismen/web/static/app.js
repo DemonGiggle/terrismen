@@ -4,6 +4,8 @@ const state = {
   documents: [],
   selectedDocumentId: null,
   messages: [],
+  documentRefreshTimer: null,
+  documentRefreshInFlight: false,
 };
 
 const elements = {
@@ -37,6 +39,18 @@ function renderSettingsSummary(settings) {
   elements.settingsSummary.textContent = summarizeSettings(settings);
 }
 
+function describeDocumentState(status) {
+  return status === "ready" ? "complete" : status;
+}
+
+function describeDocumentProgress(documentItem) {
+  if (!documentItem.progress_step_name || !documentItem.progress_step_index || !documentItem.progress_step_count) {
+    return "";
+  }
+  const prefix = documentItem.status === "failed" ? "Failed at" : "Step";
+  return `${prefix} ${documentItem.progress_step_index}/${documentItem.progress_step_count}: ${documentItem.progress_step_name}`;
+}
+
 function renderDocuments() {
   if (!state.documents.length) {
     elements.documents.className = "document-list empty document-empty-state";
@@ -51,12 +65,14 @@ function renderDocuments() {
   elements.documents.innerHTML = state.documents
     .map((documentItem) => {
       const active = documentItem.id === state.selectedDocumentId ? " active" : "";
+      const progress = describeDocumentProgress(documentItem);
       return `
         <button class="document-card${active}" data-document-id="${documentItem.id}">
           <div class="split-header">
             <strong>${escapeHtml(documentItem.original_name)}</strong>
-            <span class="tag">${escapeHtml(documentItem.status)}</span>
+            <span class="tag">${escapeHtml(describeDocumentState(documentItem.status))}</span>
           </div>
+          ${progress ? `<div class="meta">${escapeHtml(progress)}</div>` : ""}
           <div class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</div>
           ${documentItem.error ? `<div class="meta">${escapeHtml(documentItem.error)}</div>` : ""}
         </button>
@@ -180,9 +196,28 @@ function renderDocumentDetail(documentItem) {
 
   const sources = documentItem.sources || [];
   const mysteries = documentItem.mysteries || [];
-  elements.documentMeta.textContent = `${documentItem.kind || "unknown"} • ${documentItem.status} • ${sources.length} sources • ${mysteries.length} mysteries`;
+  const progress = describeDocumentProgress(documentItem);
+  elements.documentMeta.textContent = [
+    documentItem.kind || "unknown",
+    describeDocumentState(documentItem.status),
+    progress || null,
+    `${sources.length} sources`,
+    `${mysteries.length} mysteries`,
+  ]
+    .filter(Boolean)
+    .join(" • ");
   if (!sources.length && !mysteries.length) {
     elements.detail.className = "detail empty";
+    if (documentItem.status === "processing") {
+      elements.detail.textContent = progress || "This document is still processing.";
+      return;
+    }
+    if (documentItem.status === "failed") {
+      elements.detail.textContent = [progress || "This document failed to process.", documentItem.error || null]
+        .filter(Boolean)
+        .join(" ");
+      return;
+    }
     elements.detail.textContent = "This document does not have extracted notes or mysteries yet.";
     return;
   }
@@ -436,6 +471,7 @@ async function loadSettingsSummary() {
 async function loadDocuments() {
   state.documents = await api("/api/documents");
   renderDocuments();
+  syncDocumentPolling();
   const targetDocumentId = state.selectedDocumentId ?? state.documents[0]?.id ?? null;
   if (targetDocumentId !== null) {
     await openDocument(targetDocumentId);
@@ -506,6 +542,36 @@ function renderUploadSelection() {
   setUploadBusy(false);
 }
 
+function syncDocumentPolling() {
+  const hasProcessingDocuments = state.documents.some((documentItem) => documentItem.status === "processing");
+  if (hasProcessingDocuments && state.documentRefreshTimer === null) {
+    state.documentRefreshTimer = window.setInterval(refreshProcessingDocuments, 1500);
+    return;
+  }
+  if (!hasProcessingDocuments && state.documentRefreshTimer !== null) {
+    window.clearInterval(state.documentRefreshTimer);
+    state.documentRefreshTimer = null;
+  }
+}
+
+async function refreshProcessingDocuments() {
+  if (state.documentRefreshInFlight) {
+    return;
+  }
+  state.documentRefreshInFlight = true;
+  try {
+    await loadDocuments();
+  } finally {
+    state.documentRefreshInFlight = false;
+  }
+}
+
+window.addEventListener("beforeunload", () => {
+  if (state.documentRefreshTimer !== null) {
+    window.clearInterval(state.documentRefreshTimer);
+  }
+});
+
 elements.uploadInput.addEventListener("change", () => {
   renderUploadSelection();
 });
@@ -532,8 +598,8 @@ elements.uploadForm.addEventListener("submit", async (event) => {
     renderUploadSelection();
     await loadDocuments();
     await openDocument(documentItem.id);
-    setUploadFeedback(`Finished ${documentItem.original_name}. Review notes or ask grounded questions.`);
-    setStatus(`Finished ${documentItem.original_name}`);
+    setUploadFeedback(`Processing started for ${documentItem.original_name}. We will keep the current step visible while ingestion runs.`);
+    setStatus(`Started ${documentItem.original_name}`);
   } catch (error) {
     setUploadBusy(false);
     setUploadFeedback(error.message);

@@ -8,9 +8,11 @@
 
 ## Features
 
-- Web UI for provider settings, uploads, note browsing, and chat
+- Browser UI with a dedicated settings page, guided upload workflow, compact note browsing, and grounded chat
 - OpenAI-compatible provider support
 - Native Ollama support
+- Step-by-step document ingestion progress in the UI while uploads are processing
+- Step-by-step chat request progress for retrieval and answer generation
 - PDF parsing with exact page references
 - DOCX, DOC, XLSX, XLS, and plaintext parsing with stable locators
 - Image forwarding to the configured model for multimodal note enrichment

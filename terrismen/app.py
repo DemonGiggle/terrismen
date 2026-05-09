@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Iterator
 
 import uvicorn
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,7 +14,7 @@ from terrismen.config import AppConfig, load_config
 from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import answer_question, save_message
-from terrismen.services.ingestion import ingest_document
+from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion
 from terrismen.services.notes import build_reference_label
 from terrismen.services.parsers import ParserError
 
@@ -116,7 +116,9 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
 def list_documents(connection=Depends(get_connection)) -> list[dict[str, object]]:
     rows = connection.execute(
         """
-        SELECT documents.id, documents.original_name, documents.kind, documents.status, documents.error, documents.created_at,
+        SELECT documents.id, documents.original_name, documents.kind, documents.status,
+               documents.progress_step_name, documents.progress_step_index, documents.progress_step_count,
+               documents.error, documents.created_at,
                (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id) AS mystery_count,
@@ -132,7 +134,9 @@ def list_documents(connection=Depends(get_connection)) -> list[dict[str, object]
 def get_document(document_id: int, connection=Depends(get_connection)) -> dict[str, object]:
     document = connection.execute(
         """
-        SELECT id, original_name, stored_path, media_type, kind, status, error, created_at
+        SELECT id, original_name, stored_path, media_type, kind, status,
+               progress_step_name, progress_step_index, progress_step_count,
+               error, created_at
         FROM documents WHERE id = ?
         """,
         (document_id,),
@@ -194,15 +198,20 @@ def clear_messages(connection=Depends(get_connection)) -> dict[str, bool]:
 
 
 @app.post("/api/upload")
-def upload_document(file: UploadFile = File(...), connection=Depends(get_connection)) -> dict[str, object]:
+def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    connection=Depends(get_connection),
+) -> dict[str, object]:
     try:
-        document_id = ingest_document(
+        document_id = create_document_ingestion(
             connection,
             config,
             original_name=file.filename or "upload.bin",
             media_type=file.content_type or "application/octet-stream",
             blob=file.file.read(),
         )
+        background_tasks.add_task(continue_document_ingestion, config, document_id)
     except (ParserError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

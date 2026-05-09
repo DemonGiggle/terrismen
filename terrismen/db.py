@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS documents (
     media_type TEXT NOT NULL,
     kind TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'processing',
+    progress_step_name TEXT NOT NULL DEFAULT '',
+    progress_step_index INTEGER NOT NULL DEFAULT 0,
+    progress_step_count INTEGER NOT NULL DEFAULT 0,
     error TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
@@ -184,6 +187,9 @@ def init_db(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with connect(database_path) as connection:
         connection.executescript(SCHEMA)
+        _ensure_column(connection, "documents", "progress_step_name", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(connection, "documents", "progress_step_index", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, "documents", "progress_step_count", "INTEGER NOT NULL DEFAULT 0")
         connection.execute(
             """
             INSERT INTO settings (id, provider_type, base_url, model, api_key, temperature)
@@ -192,6 +198,13 @@ def init_db(database_path: Path) -> None:
             """
         )
         connection.commit()
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_definition: str) -> None:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    if any(row["name"] == column_name for row in rows):
+        return
+    connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

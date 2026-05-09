@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>terrismen</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <h1>terrismen</h1>
+          <p>Upload documents, generate detailed notes, and chat against referenced source material.</p>
+        </div>
+        <div class="status-pill" id="status-pill">Idle</div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <h2>Provider</h2>
+          <form id="settings-form" class="stack">
+            <label>
+              Provider
+              <select name="provider_type">
+                <option value="openai_compatible">OpenAI-compatible</option>
+                <option value="ollama">Ollama</option>
+              </select>
+            </label>
+            <label>
+              Base URL
+              <input name="base_url" placeholder="http://localhost:11434">
+            </label>
+            <label>
+              Model
+              <input name="model" placeholder="gpt-4o-mini or llama3.2-vision">
+            </label>
+            <label>
+              API Key
+              <input name="api_key" type="password" placeholder="Optional for Ollama/local providers">
+            </label>
+            <label>
+              Temperature
+              <input name="temperature" type="number" step="0.1" min="0" max="1" value="0.2">
+            </label>
+            <button type="submit">Save settings</button>
+          </form>
+
+          <h2>Upload</h2>
+          <form id="upload-form" class="stack">
+            <label class="upload-drop">
+              <input id="upload-input" name="file" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.text">
+              <span>Select PDF, Word, Excel, or plaintext</span>
+            </label>
+            <button type="submit">Upload and take notes</button>
+          </form>
+
+          <h2>Documents</h2>
+          <div id="documents" class="document-list empty">No documents yet.</div>
+        </section>
+
+        <section class="panel panel-wide">
+          <div class="split-header">
+            <h2>Document detail</h2>
+            <span id="document-meta"></span>
+          </div>
+          <div id="document-detail" class="detail empty">Select a document to inspect its notes and source references.</div>
+        </section>
+
+        <section class="panel panel-chat">
+          <div class="split-header">
+            <h2>Grounded chat</h2>
+            <button id="clear-chat" class="secondary">Clear</button>
+          </div>
+          <div id="chat-log" class="chat-log empty">Chat history will appear here.</div>
+          <form id="chat-form" class="chat-form">
+            <textarea id="chat-input" name="message" rows="4" placeholder="Ask a question about the uploaded documents"></textarea>
+            <button type="submit">Ask</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>

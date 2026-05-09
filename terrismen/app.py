@@ -80,6 +80,11 @@ def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "web" / "static" / "index.html")
 
 
+@app.get("/settings")
+def settings_page() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "web" / "static" / "settings.html")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

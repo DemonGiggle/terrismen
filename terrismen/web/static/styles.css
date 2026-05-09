@@ -23,6 +23,10 @@ body {
   padding: 24px;
 }
 
+.shell-narrow {
+  max-width: 960px;
+}
+
 .topbar,
 .split-header,
 .document-card,
@@ -100,7 +104,8 @@ label {
 input,
 select,
 textarea,
-button {
+button,
+.button-link {
   font: inherit;
 }
 
@@ -119,7 +124,8 @@ textarea {
   resize: vertical;
 }
 
-button {
+button,
+.button-link {
   border: 0;
   border-radius: 12px;
   padding: 10px 14px;
@@ -127,10 +133,42 @@ button {
   color: white;
   cursor: pointer;
   font-weight: 600;
+  text-decoration: none;
 }
 
-button.secondary {
+button.secondary,
+.button-link.secondary {
   background: rgba(51, 65, 85, 0.9);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.config-summary {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
+.config-summary .meta {
+  max-width: 320px;
+  text-align: right;
+}
+
+.tag-success {
+  background: rgba(6, 78, 59, 0.28);
+  border-color: rgba(52, 211, 153, 0.38);
+}
+
+.tag-warning {
+  background: rgba(120, 53, 15, 0.28);
+  border-color: rgba(251, 191, 36, 0.38);
 }
 
 .upload-drop {
@@ -153,7 +191,7 @@ button.secondary {
 }
 
 .document-list {
-  max-height: calc(78vh - 420px);
+  max-height: calc(78vh - 260px);
   overflow: auto;
 }
 
@@ -315,6 +353,18 @@ button.secondary {
   gap: 12px;
 }
 
+.settings-layout {
+  display: grid;
+}
+
+.settings-panel {
+  max-width: 720px;
+}
+
+.settings-panel .stack {
+  margin-bottom: 0;
+}
+
 .empty {
   color: #94a3b8;
 }
@@ -333,5 +383,14 @@ button.secondary {
   .detail,
   .chat-log {
     max-height: none;
+  }
+
+  .config-summary {
+    justify-items: start;
+  }
+
+  .config-summary .meta {
+    max-width: none;
+    text-align: left;
   }
 }

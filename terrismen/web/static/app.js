@@ -1,3 +1,5 @@
+import { api, getSettingsState, summarizeSettings } from "./shared.js";
+
 const state = {
   documents: [],
   selectedDocumentId: null,
@@ -6,7 +8,8 @@ const state = {
 
 const elements = {
   status: document.querySelector("#status-pill"),
-  settingsForm: document.querySelector("#settings-form"),
+  settingsSummary: document.querySelector("#settings-summary"),
+  settingsIndicator: document.querySelector("#settings-indicator"),
   uploadForm: document.querySelector("#upload-form"),
   uploadInput: document.querySelector("#upload-input"),
   documents: document.querySelector("#documents"),
@@ -22,19 +25,11 @@ function setStatus(text) {
   elements.status.textContent = text;
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: {
-      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
-  }
-  return payload;
+function renderSettingsSummary(settings) {
+  const settingsState = getSettingsState(settings);
+  elements.settingsIndicator.textContent = settingsState.label;
+  elements.settingsIndicator.className = settingsState.className;
+  elements.settingsSummary.textContent = summarizeSettings(settings);
 }
 
 function renderDocuments() {
@@ -401,13 +396,9 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
-async function loadSettings() {
+async function loadSettingsSummary() {
   const settings = await api("/api/settings");
-  elements.settingsForm.provider_type.value = settings.provider_type || "openai_compatible";
-  elements.settingsForm.base_url.value = settings.base_url || "";
-  elements.settingsForm.model.value = settings.model || "";
-  elements.settingsForm.api_key.value = settings.api_key || "";
-  elements.settingsForm.temperature.value = settings.temperature ?? 0.2;
+  renderSettingsSummary(settings);
 }
 
 async function loadDocuments() {
@@ -440,27 +431,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-
-elements.settingsForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  setStatus("Saving settings...");
-  try {
-    const formData = new FormData(elements.settingsForm);
-    await api("/api/settings", {
-      method: "PUT",
-      body: JSON.stringify({
-        provider_type: formData.get("provider_type"),
-        base_url: formData.get("base_url"),
-        model: formData.get("model"),
-        api_key: formData.get("api_key"),
-        temperature: Number(formData.get("temperature")),
-      }),
-    });
-    setStatus("Settings saved");
-  } catch (error) {
-    setStatus(error.message);
-  }
-});
 
 elements.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -540,5 +510,9 @@ elements.clearChat.addEventListener("click", async () => {
   }
 });
 
-await Promise.all([loadSettings(), loadDocuments(), loadMessages()]);
-setStatus("Ready");
+try {
+  await Promise.all([loadSettingsSummary(), loadDocuments(), loadMessages()]);
+  setStatus("Ready");
+} catch (error) {
+  setStatus(error.message);
+}

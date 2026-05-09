@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>terrismen settings</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="shell shell-narrow">
+      <header class="topbar">
+        <div>
+          <h1>Provider settings</h1>
+          <p>Configure the model connection separately so the main workspace stays focused on documents and chat.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link secondary" href="/">Back to workspace</a>
+          <div class="status-pill" id="status-pill">Idle</div>
+        </div>
+      </header>
+
+      <main class="settings-layout">
+        <section class="panel settings-panel">
+          <div class="split-header">
+            <div>
+              <h2>Connection</h2>
+              <p class="meta" id="settings-summary">Loading provider configuration...</p>
+            </div>
+            <span class="tag tag-warning" id="settings-indicator">Checking setup...</span>
+          </div>
+
+          <form id="settings-form" class="stack">
+            <label>
+              Provider
+              <select name="provider_type">
+                <option value="openai_compatible">OpenAI-compatible</option>
+                <option value="ollama">Ollama</option>
+              </select>
+            </label>
+            <label>
+              Base URL
+              <input name="base_url" placeholder="http://localhost:11434">
+            </label>
+            <label>
+              Model
+              <input name="model" placeholder="gpt-4o-mini or llama3.2-vision">
+            </label>
+            <label>
+              API Key
+              <input name="api_key" type="password" placeholder="Optional for Ollama/local providers">
+            </label>
+            <label>
+              Temperature
+              <input name="temperature" type="number" step="0.1" min="0" max="1" value="0.2">
+            </label>
+            <button type="submit">Save settings</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/settings.js" type="module"></script>
+  </body>
+</html>

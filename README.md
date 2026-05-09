@@ -32,6 +32,8 @@
 6. After the full document is read, `terrismen` revisits every unresolved mystery, searches indexed notes and source excerpts, and stores any grounded resolutions with direct note/source references.
 7. During chat, `terrismen` searches the stored notes and mystery resolutions, asks the model to pick the most relevant references, then answers from the original source excerpts and chat history.
 
+See [`docs/llm-prompts.md`](docs/llm-prompts.md) for the current prompt inventory, when each prompt is sent, and the end-to-end LLM data flow.
+
 ## Requirements
 
 - Python 3.11+

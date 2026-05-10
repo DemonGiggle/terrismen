@@ -10,9 +10,8 @@
     <div class="shell">
       <header class="topbar">
         <div>
-          <span class="tag">Chat workspace</span>
           <h1>terrismen</h1>
-          <p>Ask grounded questions with your documents close at hand.</p>
+          <p>Ask your documents.</p>
         </div>
         <div class="topbar-actions">
           <div class="config-summary">
@@ -29,30 +28,29 @@
           <div class="split-header">
             <div>
               <h2>Documents</h2>
-              <p class="meta">Manage sources for grounded answers.</p>
+              <p class="meta">Choose what chat can use.</p>
             </div>
           </div>
 
           <section class="sidebar-upload" aria-label="Upload documents">
             <div class="split-header">
-              <strong>Add source</strong>
-              <span class="tag">Upload</span>
+              <strong>Add document</strong>
             </div>
             <form id="upload-form" class="stack upload-stack">
               <label class="upload-drop compact-upload-drop">
                 <input id="upload-input" name="file" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.text">
                 <span class="upload-drop-title">Choose a document</span>
-                <span class="upload-drop-subtitle">PDF, Word, Excel, Markdown, or text</span>
+                <span class="upload-drop-subtitle">PDF, Word, Excel, or text</span>
               </label>
 
               <div id="upload-selection" class="upload-selection empty" aria-live="polite">
-                <strong id="upload-selection-name">No file selected yet</strong>
-                <p class="meta" id="upload-selection-meta">Pick a file to enable processing.</p>
+                <strong id="upload-selection-name"></strong>
+                <p class="meta" id="upload-selection-meta"></p>
               </div>
 
               <div class="upload-actions">
                 <button id="upload-submit" type="submit" disabled>Add Doc</button>
-                <p class="meta" id="upload-feedback" aria-live="polite">Choose a file first to begin processing.</p>
+                <p class="meta" id="upload-feedback" aria-live="polite"></p>
               </div>
             </form>
           </section>
@@ -60,7 +58,6 @@
           <section class="document-sidebar-section" aria-label="Document list">
             <div class="split-header">
               <strong>Sources</strong>
-              <span class="meta">Processed files appear here</span>
             </div>
             <div id="documents" class="document-list empty">No documents yet.</div>
           </section>
@@ -69,13 +66,13 @@
         <section class="panel panel-chat chat-workspace" aria-label="Grounded chat">
           <div class="split-header chat-workspace-header">
             <div>
-              <h2>Grounded chat</h2>
-              <p class="meta">Answers cite notes and source references from the documents panel.</p>
+              <h2>Chat</h2>
+              <p class="meta" id="chat-scope-label">Using selected documents</p>
             </div>
             <button id="clear-chat" class="secondary">Clear</button>
           </div>
-          <div id="chat-progress" class="chat-progress empty">Chat request progress will appear here while an answer is running.</div>
-          <div id="chat-log" class="chat-log empty">Chat history will appear here.</div>
+          <div id="chat-progress" class="chat-progress empty" hidden></div>
+          <div id="chat-log" class="chat-log empty">Ask a question to begin.</div>
           <form id="chat-form" class="chat-form">
             <textarea id="chat-input" name="message" rows="4" placeholder="Ask a question about the uploaded documents"></textarea>
             <button id="chat-submit" type="submit">Ask</button>

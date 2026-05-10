@@ -11,6 +11,7 @@ const state = {
   activeChatRequestId: null,
   chatRequestTimer: null,
   chatRequestInFlight: false,
+  deletingDocumentIds: new Set(),
 };
 
 const elements = {
@@ -93,7 +94,7 @@ function renderDocuments() {
           </label>
           <div class="document-card-actions">
             <a class="button-link secondary compact-action" href="/documents/${documentItem.id}/notes" data-document-action="view">View</a>
-            <button class="secondary compact-action" type="button" data-document-action="delete" disabled title="Deletion is handled in a dedicated change">Delete</button>
+            <button class="secondary compact-action" type="button" data-document-action="delete" ${state.deletingDocumentIds.has(documentItem.id) ? "disabled" : ""}>${state.deletingDocumentIds.has(documentItem.id) ? "Deleting..." : "Delete"}</button>
           </div>
         </article>
       `;
@@ -421,6 +422,32 @@ function selectDocument(documentId) {
   renderDocuments();
 }
 
+async function deleteDocument(documentId) {
+  const documentItem = state.documents.find((item) => item.id === documentId);
+  const label = documentItem?.original_name || "this document";
+  if (!window.confirm(`Delete ${label} and all processed notes, mysteries, and source files?`)) {
+    return;
+  }
+
+  state.deletingDocumentIds.add(documentId);
+  renderDocuments();
+  setStatus(`Deleting ${label}...`);
+  try {
+    await api(`/api/documents/${documentId}`, { method: "DELETE" });
+    state.checkedDocumentIds.delete(documentId);
+    if (state.selectedDocumentId === documentId) {
+      state.selectedDocumentId = null;
+    }
+    await loadDocuments();
+    setStatus(`Deleted ${label}`);
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    state.deletingDocumentIds.delete(documentId);
+    renderDocuments();
+  }
+}
+
 async function loadMessages() {
   state.messages = await api("/api/messages");
   renderMessages();
@@ -614,7 +641,11 @@ elements.documents.addEventListener("click", async (event) => {
   if (!target) {
     return;
   }
-  if (event.target.closest("[data-document-action]")) {
+  const action = event.target.closest("[data-document-action]");
+  if (action) {
+    if (action.dataset.documentAction === "delete") {
+      await deleteDocument(Number(target.dataset.documentId));
+    }
     return;
   }
   const checkbox = event.target.closest("[data-document-checkbox-id]");

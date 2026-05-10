@@ -311,6 +311,39 @@ input[disabled] {
   flex-direction: column;
 }
 
+.document-select-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  cursor: pointer;
+}
+
+.document-source-checkbox {
+  width: auto;
+  margin-top: 3px;
+  accent-color: #818cf8;
+}
+
+.document-card-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.document-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 28px;
+}
+
+.compact-action {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
 .document-card.active {
   border-color: rgba(129, 140, 248, 0.8);
   background: rgba(67, 56, 202, 0.18);

@@ -263,13 +263,14 @@ label {
 }
 
 .workspace-layout {
-  grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+  grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
 }
 
 .panel {
   position: relative;
   display: grid;
   gap: 1.5rem;
+  min-width: 0;
   padding: 2rem;
   border: 1px solid var(--border);
   background: var(--background);
@@ -278,6 +279,7 @@ label {
 .panel > * {
   position: relative;
   z-index: 1;
+  min-width: 0;
 }
 
 .panel h2,
@@ -365,6 +367,7 @@ label {
 .upload-actions {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .stack {
@@ -379,6 +382,7 @@ label {
 input,
 select,
 textarea {
+  min-width: 0;
   width: 100%;
   border: 2px solid var(--border);
   background: var(--background);
@@ -523,6 +527,8 @@ button:focus-visible,
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 0.75rem 1.25rem;
+  min-width: 0;
+  max-width: 100%;
   padding: 1.75rem;
   border-width: 2px;
   cursor: pointer;
@@ -532,6 +538,14 @@ button:focus-visible,
   background-size: 24px 24px;
   text-align: left;
   transition: background-color 100ms linear, color 100ms linear, border-width 100ms linear;
+}
+
+.compact-upload-drop {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.compact-upload-drop::after {
+  justify-self: start;
 }
 
 .upload-drop::after {
@@ -568,6 +582,7 @@ button:focus-visible,
 
 .upload-drop-title {
   grid-column: 1;
+  min-width: 0;
   font-family: var(--font-display);
   font-size: 1.75rem;
   line-height: 1;
@@ -575,6 +590,7 @@ button:focus-visible,
 
 .upload-drop-subtitle {
   grid-column: 1;
+  min-width: 0;
   color: var(--muted-foreground);
   font-size: 1rem;
 }
@@ -594,6 +610,7 @@ button:focus-visible,
 .document-list,
 .detail,
 .chat-log {
+  min-width: 0;
   overflow: auto;
 }
 
@@ -618,6 +635,7 @@ button:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  min-width: 0;
   padding: 1.25rem;
   transition: background-color 100ms linear, color 100ms linear, border-width 100ms linear;
 }
@@ -726,6 +744,7 @@ button:focus-visible,
   gap: 0.5rem;
   min-width: 0;
   flex: 1;
+  overflow-wrap: anywhere;
 }
 
 .compact-action {
@@ -803,6 +822,8 @@ button:focus-visible,
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: end;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-form button {

@@ -69,9 +69,10 @@ def test_chat_returns_request_progress_payload(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(app_module, "continue_chat_request", lambda config, request_id: None)
     client = TestClient(app_module.app)
 
-    response = client.post("/api/chat", json={"message": "What does the document say?"})
+    response = client.post("/api/chat", json={"message": "What does the document say?", "document_ids": []})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "processing"
     assert payload["progress_step_count"] == 6
+    assert payload["selected_document_ids"] == []

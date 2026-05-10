@@ -57,3 +57,53 @@ def test_search_candidate_notes_returns_matches(tmp_path: Path) -> None:
     assert rows
     assert rows[0]["source_id"] == source_id
     connection.close()
+
+
+def test_search_candidate_notes_respects_document_scope(tmp_path: Path) -> None:
+    database_path = tmp_path / "terrismen.db"
+    init_db(database_path)
+    connection = connect(database_path)
+
+    first_doc_id = connection.execute(
+        """
+        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("first.pdf", "/tmp/first.pdf", "application/pdf", "pdf", "ready", "", utcnow()),
+    ).lastrowid
+    second_doc_id = connection.execute(
+        """
+        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("second.pdf", "/tmp/second.pdf", "application/pdf", "pdf", "ready", "", utcnow()),
+    ).lastrowid
+    first_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (first_doc_id, "Page 1", 1, "Alpha scoped retrieval fact.", "", "{}", utcnow()),
+    ).lastrowid
+    second_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (second_doc_id, "Page 1", 1, "Alpha scoped retrieval fact.", "", "{}", utcnow()),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+        (first_doc_id, first_source_id, "Alpha scoped retrieval fact from first.", "alpha", utcnow()),
+    )
+    connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+        (second_doc_id, second_source_id, "Alpha scoped retrieval fact from second.", "alpha", utcnow()),
+    )
+    connection.commit()
+
+    rows = search_candidate_notes(connection, "alpha scoped", document_ids=[int(second_doc_id)])
+
+    assert rows
+    assert {row["source_id"] for row in rows} == {second_source_id}
+    connection.close()

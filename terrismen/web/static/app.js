@@ -451,11 +451,27 @@ function setUploadFeedback(text) {
   elements.uploadFeedback.textContent = text;
 }
 
+function hasProcessingDocuments() {
+  return state.documents.some((documentItem) => documentItem.status === "processing");
+}
+
 function setChatBusy(isBusy) {
-  elements.chatInput.disabled = isBusy;
-  elements.chatSubmit.disabled = isBusy;
+  const lockedForIngestion = hasProcessingDocuments();
+  const isDisabled = isBusy || lockedForIngestion;
+  elements.chatInput.disabled = isDisabled;
+  elements.chatSubmit.disabled = isDisabled;
   elements.clearChat.disabled = isBusy;
   elements.chatSubmit.textContent = isBusy ? "Working..." : "Ask";
+  if (lockedForIngestion && !isBusy) {
+    elements.chatProgress.className = "chat-progress";
+    elements.chatProgress.textContent = "Chat is locked while document ingestion is running.";
+  } else if (!lockedForIngestion && !isBusy && state.activeChatRequestId === null) {
+    renderChatProgress(null);
+  }
+}
+
+function getCheckedDocumentIds() {
+  return [...state.checkedDocumentIds];
 }
 
 function setUploadBusy(isBusy) {
@@ -484,12 +500,13 @@ function renderUploadSelection() {
 }
 
 function syncDocumentPolling() {
-  const hasProcessingDocuments = state.documents.some((documentItem) => documentItem.status === "processing");
-  if (hasProcessingDocuments && state.documentRefreshTimer === null) {
+  const processing = hasProcessingDocuments();
+  setChatBusy(state.activeChatRequestId !== null);
+  if (processing && state.documentRefreshTimer === null) {
     state.documentRefreshTimer = window.setInterval(refreshProcessingDocuments, 1500);
     return;
   }
-  if (!hasProcessingDocuments && state.documentRefreshTimer !== null) {
+  if (!processing && state.documentRefreshTimer !== null) {
     window.clearInterval(state.documentRefreshTimer);
     state.documentRefreshTimer = null;
   }
@@ -621,12 +638,17 @@ elements.chatForm.addEventListener("submit", async (event) => {
   if (!message) {
     return;
   }
+  if (hasProcessingDocuments()) {
+    setStatus("Chat is locked during document ingestion");
+    setChatBusy(false);
+    return;
+  }
   setChatBusy(true);
   setStatus("Starting chat...");
   try {
     const request = await api("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, document_ids: getCheckedDocumentIds() }),
     });
     elements.chatInput.value = "";
     state.activeChatRequestId = request.id;

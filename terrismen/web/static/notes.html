@@ -4,12 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terrismen Notes</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Playfair+Display:wght@600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=asset-monochrome-20260510">
 </head>
-<body>
+<body class="monochrome-theme">
+  <a class="skip-link" href="#notes-viewer">Skip to content</a>
   <div class="shell notes-shell">
     <header class="topbar">
-      <div>
+      <div class="topbar-copy">
         <a class="eyebrow" href="/">← Workspace</a>
         <h1 id="notes-title">Notes</h1>
         <p class="subtitle" id="notes-subtitle">Notes and unresolved questions.</p>
@@ -20,7 +24,7 @@
     </header>
 
     <main>
-      <section class="panel notes-viewer" aria-labelledby="notes-title">
+      <section id="notes-viewer" class="panel notes-viewer" aria-labelledby="notes-title">
         <div class="split-header notes-controls">
           <label>
             Show
@@ -42,6 +46,6 @@
       </section>
     </main>
   </div>
-  <script type="module" src="/static/notes.js"></script>
+  <script type="module" src="/static/notes.js?v=asset-monochrome-20260510"></script>
 </body>
 </html>

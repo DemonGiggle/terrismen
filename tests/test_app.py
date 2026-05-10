@@ -22,6 +22,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert 'href="/settings"' in response.text
     assert 'id="settings-form"' not in response.text
     assert "Ask your documents." in response.text
+    assert "Start Process" in response.text
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
 

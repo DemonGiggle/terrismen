@@ -17,7 +17,6 @@ const state = {
 const elements = {
   status: document.querySelector("#status-pill"),
   settingsSummary: document.querySelector("#settings-summary"),
-  settingsIndicator: document.querySelector("#settings-indicator"),
   uploadForm: document.querySelector("#upload-form"),
   uploadInput: document.querySelector("#upload-input"),
   uploadSelection: document.querySelector("#upload-selection"),
@@ -26,6 +25,7 @@ const elements = {
   uploadSubmit: document.querySelector("#upload-submit"),
   uploadFeedback: document.querySelector("#upload-feedback"),
   documents: document.querySelector("#documents"),
+  sourceSelectionSummary: document.querySelector("#source-selection-summary"),
   chatForm: document.querySelector("#chat-form"),
   chatInput: document.querySelector("#chat-input"),
   chatSubmit: document.querySelector("#chat-submit"),
@@ -41,13 +41,8 @@ function setStatus(text) {
 
 function renderSettingsSummary(settings) {
   const settingsState = getSettingsState(settings);
-  elements.settingsIndicator.textContent = settingsState.label;
-  elements.settingsIndicator.className = settingsState.className;
+  elements.settingsSummary.className = settingsState.isConfigured ? "meta" : "setup-notice";
   elements.settingsSummary.textContent = summarizeSettings(settings);
-}
-
-function describeDocumentState(status) {
-  return status === "ready" ? "complete" : status;
 }
 
 function isDocumentReady(documentItem) {
@@ -80,6 +75,8 @@ function renderDocuments() {
     .map((documentItem) => {
       const active = documentItem.id === state.selectedDocumentId ? " active" : "";
       const progress = describeDocumentProgress(documentItem);
+      const isReady = isDocumentReady(documentItem);
+      const isUsedForChat = isReady && state.checkedDocumentIds.has(documentItem.id);
       return `
         <article class="document-card${active}" data-document-id="${documentItem.id}">
           <label class="document-select-row">
@@ -87,14 +84,13 @@ function renderDocuments() {
               type="checkbox"
               class="document-source-checkbox"
               data-document-checkbox-id="${documentItem.id}"
-              ${isDocumentReady(documentItem) && state.checkedDocumentIds.has(documentItem.id) ? "checked" : ""}
-              ${isDocumentReady(documentItem) ? "" : "disabled"}
+              ${isUsedForChat ? "checked" : ""}
+              ${isReady ? "" : "disabled"}
               aria-label="Use ${escapeAttribute(documentItem.original_name)} for chat"
             >
             <span class="document-card-main">
               <span class="split-header">
                 <strong>${escapeHtml(documentItem.original_name)}</strong>
-                <span class="tag">${escapeHtml(describeDocumentState(documentItem.status))}</span>
               </span>
               ${progress ? `<span class="meta">${escapeHtml(progress)}</span>` : ""}
               <span class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</span>
@@ -532,9 +528,12 @@ function renderChatScope() {
   const count = getReadyCheckedDocumentIds().length;
   if (!state.documents.length) {
     elements.chatScopeLabel.textContent = "Add documents to start";
+    elements.sourceSelectionSummary.textContent = "0 selected";
     return;
   }
+  const readyCount = state.documents.filter(isDocumentReady).length;
   elements.chatScopeLabel.textContent = count === 1 ? "Using 1 document" : `Using ${count} documents`;
+  elements.sourceSelectionSummary.textContent = `${count} of ${readyCount} selected`;
 }
 
 function setUploadBusy(isBusy) {
@@ -687,20 +686,26 @@ elements.documents.addEventListener("click", async (event) => {
     }
     return;
   }
-  const checkbox = event.target.closest("[data-document-checkbox-id]");
-  if (checkbox) {
-    const documentId = Number(checkbox.dataset.documentCheckboxId);
-    if (checkbox.checked) {
-      state.checkedDocumentIds.add(documentId);
-    } else {
-      state.checkedDocumentIds.delete(documentId);
-    }
-    const selectedCount = getReadyCheckedDocumentIds().length;
-    setStatus(`${selectedCount} source${selectedCount === 1 ? "" : "s"} selected`);
-    renderDocuments();
+  if (event.target.closest(".document-select-row")) {
     return;
   }
   selectDocument(target.dataset.documentId);
+});
+
+elements.documents.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-document-checkbox-id]");
+  if (!checkbox) {
+    return;
+  }
+  const documentId = Number(checkbox.dataset.documentCheckboxId);
+  if (checkbox.checked) {
+    state.checkedDocumentIds.add(documentId);
+  } else {
+    state.checkedDocumentIds.delete(documentId);
+  }
+  const selectedCount = getReadyCheckedDocumentIds().length;
+  setStatus(`${selectedCount} source${selectedCount === 1 ? "" : "s"} selected`);
+  renderDocuments();
 });
 
 elements.chatForm.addEventListener("submit", async (event) => {

@@ -21,8 +21,9 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert response.status_code == 200
     assert 'href="/settings"' in response.text
     assert 'id="settings-form"' not in response.text
-    assert "Start processing document" in response.text
-    assert "Supported files" in response.text
+    assert "Chat workspace" in response.text
+    assert "Grounded chat" in response.text
+    assert "Document detail" not in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:

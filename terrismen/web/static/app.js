@@ -515,8 +515,9 @@ function renderChatScope() {
 function setUploadBusy(isBusy) {
   const hasFile = Boolean(elements.uploadInput.files?.length);
   elements.uploadSubmit.disabled = isBusy || !hasFile;
+  elements.uploadSubmit.hidden = !isBusy && !hasFile;
   elements.uploadInput.disabled = isBusy;
-  elements.uploadSubmit.textContent = isBusy ? "Starting processing..." : "Add Doc";
+  elements.uploadSubmit.textContent = isBusy ? "Starting processing..." : "Start Process";
 }
 
 function renderUploadSelection() {

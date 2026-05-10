@@ -28,8 +28,21 @@ class ProviderSettingsPayload(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
+    document_ids: list[int] = Field(default_factory=list)
 
     @field_validator("message", mode="before")
     @classmethod
     def strip_message(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("document_ids")
+    @classmethod
+    def dedupe_document_ids(cls, value: list[int]) -> list[int]:
+        seen: set[int] = set()
+        deduped: list[int] = []
+        for document_id in value:
+            if document_id <= 0 or document_id in seen:
+                continue
+            seen.add(document_id)
+            deduped.append(document_id)
+        return deduped

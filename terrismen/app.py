@@ -222,7 +222,7 @@ def upload_document(
 @app.post("/api/chat")
 def chat(payload: ChatRequest, background_tasks: BackgroundTasks, connection=Depends(get_connection)) -> dict[str, object]:
     try:
-        request_payload = create_chat_request(connection, payload.message)
+        request_payload = create_chat_request(connection, payload.message, payload.document_ids)
         background_tasks.add_task(continue_chat_request, config, request_payload["id"])
         return request_payload
     except Exception as exc:

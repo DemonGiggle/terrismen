@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS chat_requests (
     id TEXT PRIMARY KEY,
     question TEXT NOT NULL,
+    selected_document_ids_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'processing',
     progress_step_name TEXT NOT NULL DEFAULT '',
     progress_step_index INTEGER NOT NULL DEFAULT 0,
@@ -206,6 +207,7 @@ def init_db(database_path: Path) -> None:
         _ensure_column(connection, "documents", "progress_step_name", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(connection, "documents", "progress_step_index", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "documents", "progress_step_count", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, "chat_requests", "selected_document_ids_json", "TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             """
             INSERT INTO settings (id, provider_type, base_url, model, api_key, temperature)
@@ -227,7 +229,7 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     result = dict(row)
-    for field in ("citations_json", "metadata_json"):
+    for field in ("citations_json", "metadata_json", "selected_document_ids_json"):
         if field in result and isinstance(result[field], str):
             result[field] = json.loads(result[field])
     return result

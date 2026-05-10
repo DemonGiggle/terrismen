@@ -43,47 +43,56 @@ def recent_messages(connection: sqlite3.Connection, limit: int = 8) -> list[sqli
     return list(reversed(rows))
 
 
-def _search_note_rows(connection: sqlite3.Connection, question: str, limit: int) -> list[dict[str, object]]:
+def _document_scope_clause(document_ids: list[int], column: str) -> tuple[str, list[int]]:
+    if not document_ids:
+        return "", []
+    placeholders = ", ".join("?" for _ in document_ids)
+    return f" AND {column} IN ({placeholders})", document_ids
+
+
+def _search_note_rows(connection: sqlite3.Connection, question: str, limit: int, document_ids: list[int]) -> list[dict[str, object]]:
     fts_query = build_fts_query(question)
+    scope_clause, scope_values = _document_scope_clause(document_ids, "notes.document_id")
     if fts_query:
         rows = connection.execute(
-            """
+            f"""
             SELECT notes.id, notes.note, notes.keywords, notes.source_id, sources.content, sources.locator, sources.page_number,
                    documents.original_name
             FROM notes_fts
             JOIN notes ON notes_fts.rowid = notes.id
             JOIN sources ON sources.id = notes.source_id
             JOIN documents ON documents.id = notes.document_id
-            WHERE notes_fts MATCH ?
+            WHERE notes_fts MATCH ?{scope_clause}
             ORDER BY bm25(notes_fts)
             LIMIT ?
             """,
-            (fts_query, limit),
+            [fts_query, *scope_values, limit],
         ).fetchall()
         if rows:
             return [dict(row) for row in rows]
     like_pattern = f"%{question[:120]}%"
     rows = connection.execute(
-        """
+        f"""
         SELECT notes.id, notes.note, notes.keywords, notes.source_id, sources.content, sources.locator, sources.page_number,
                documents.original_name
         FROM notes
         JOIN sources ON sources.id = notes.source_id
         JOIN documents ON documents.id = notes.document_id
-        WHERE notes.note LIKE ? OR sources.content LIKE ?
+        WHERE (notes.note LIKE ? OR sources.content LIKE ?){scope_clause}
         ORDER BY notes.id DESC
         LIMIT ?
         """,
-        (like_pattern, like_pattern, limit),
+        [like_pattern, like_pattern, *scope_values, limit],
     ).fetchall()
     return [dict(row) for row in rows]
 
 
-def _search_mystery_rows(connection: sqlite3.Connection, question: str, limit: int) -> list[dict[str, object]]:
+def _search_mystery_rows(connection: sqlite3.Connection, question: str, limit: int, document_ids: list[int]) -> list[dict[str, object]]:
     fts_query = build_fts_query(question)
+    scope_clause, scope_values = _document_scope_clause(document_ids, "unresolved_mysteries.document_id")
     if fts_query:
         rows = connection.execute(
-            """
+            f"""
             SELECT unresolved_mysteries.id,
                    CASE
                        WHEN unresolved_mysteries.status = 'resolved' THEN
@@ -102,18 +111,18 @@ def _search_mystery_rows(connection: sqlite3.Connection, question: str, limit: i
             JOIN documents ON documents.id = unresolved_mysteries.document_id
             LEFT JOIN sources origin_sources ON origin_sources.id = unresolved_mysteries.source_id
             LEFT JOIN sources resolution_sources ON resolution_sources.id = unresolved_mysteries.resolution_source_id
-            WHERE unresolved_mysteries_fts MATCH ?
+            WHERE unresolved_mysteries_fts MATCH ?{scope_clause}
             ORDER BY CASE unresolved_mysteries.status WHEN 'resolved' THEN 0 ELSE 1 END, bm25(unresolved_mysteries_fts)
             LIMIT ?
             """,
-            (fts_query, limit),
+            [fts_query, *scope_values, limit],
         ).fetchall()
         if rows:
             return [dict(row) for row in rows]
 
     like_pattern = f"%{question[:120]}%"
     rows = connection.execute(
-        """
+        f"""
         SELECT unresolved_mysteries.id,
                CASE
                    WHEN unresolved_mysteries.status = 'resolved' THEN
@@ -131,19 +140,20 @@ def _search_mystery_rows(connection: sqlite3.Connection, question: str, limit: i
         JOIN documents ON documents.id = unresolved_mysteries.document_id
         LEFT JOIN sources origin_sources ON origin_sources.id = unresolved_mysteries.source_id
         LEFT JOIN sources resolution_sources ON resolution_sources.id = unresolved_mysteries.resolution_source_id
-        WHERE unresolved_mysteries.question LIKE ?
+        WHERE (unresolved_mysteries.question LIKE ?
            OR unresolved_mysteries.reason LIKE ?
-           OR unresolved_mysteries.resolution_summary LIKE ?
+           OR unresolved_mysteries.resolution_summary LIKE ?){scope_clause}
         ORDER BY CASE unresolved_mysteries.status WHEN 'resolved' THEN 0 ELSE 1 END, unresolved_mysteries.id DESC
         LIMIT ?
         """,
-        (like_pattern, like_pattern, like_pattern, limit),
+        [like_pattern, like_pattern, like_pattern, *scope_values, limit],
     ).fetchall()
     return [dict(row) for row in rows]
 
 
-def search_candidate_notes(connection: sqlite3.Connection, question: str, limit: int = 6) -> list[dict[str, object]]:
-    combined = _search_note_rows(connection, question, limit) + _search_mystery_rows(connection, question, limit)
+def search_candidate_notes(connection: sqlite3.Connection, question: str, limit: int = 6, document_ids: list[int] | None = None) -> list[dict[str, object]]:
+    scope = document_ids or []
+    combined = _search_note_rows(connection, question, limit, scope) + _search_mystery_rows(connection, question, limit, scope)
     deduped: list[dict[str, object]] = []
     seen: set[tuple[object, object]] = set()
     for row in combined:
@@ -196,10 +206,11 @@ def _pick_source_ids(provider, question: str, history: list[sqlite3.Row], candid
     return source_ids
 
 
-def _load_sources(connection: sqlite3.Connection, source_ids: list[int]) -> list[sqlite3.Row]:
+def _load_sources(connection: sqlite3.Connection, source_ids: list[int], document_ids: list[int] | None = None) -> list[sqlite3.Row]:
     if not source_ids:
         return []
     placeholders = ", ".join("?" for _ in source_ids)
+    scope_clause, scope_values = _document_scope_clause(document_ids or [], "sources.document_id")
     return connection.execute(
         f"""
         SELECT sources.id, sources.locator, sources.page_number, sources.content, sources.image_summary,
@@ -207,10 +218,10 @@ def _load_sources(connection: sqlite3.Connection, source_ids: list[int]) -> list
         FROM sources
         JOIN notes ON notes.source_id = sources.id
         JOIN documents ON documents.id = sources.document_id
-        WHERE sources.id IN ({placeholders})
+        WHERE sources.id IN ({placeholders}){scope_clause}
         ORDER BY sources.id
         """,
-        source_ids,
+        [*source_ids, *scope_values],
     ).fetchall()
 
 
@@ -237,29 +248,36 @@ def update_chat_request_progress(connection: sqlite3.Connection, request_id: str
 def get_chat_request(connection: sqlite3.Connection, request_id: str) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, question, status, progress_step_name, progress_step_index, progress_step_count,
+        SELECT id, question, selected_document_ids_json, status, progress_step_name, progress_step_index, progress_step_count,
                error, user_message_id, assistant_message_id, created_at, completed_at
         FROM chat_requests
         WHERE id = ?
         """,
         (request_id,),
     ).fetchone()
-    return dict(row) if row is not None else None
+    return row_to_chat_request(row) if row is not None else None
 
 
-def create_chat_request(connection: sqlite3.Connection, question: str) -> dict[str, object]:
+def row_to_chat_request(row: sqlite3.Row) -> dict[str, object]:
+    payload = dict(row)
+    payload["selected_document_ids"] = json.loads(payload.pop("selected_document_ids_json") or "[]")
+    return payload
+
+
+def create_chat_request(connection: sqlite3.Connection, question: str, document_ids: list[int] | None = None) -> dict[str, object]:
     request_id = uuid.uuid4().hex
     connection.execute(
         """
         INSERT INTO chat_requests (
-            id, question, status, progress_step_name, progress_step_index, progress_step_count,
+            id, question, selected_document_ids_json, status, progress_step_name, progress_step_index, progress_step_count,
             error, user_message_id, assistant_message_id, created_at, completed_at
         )
-        VALUES (?, ?, 'processing', ?, ?, ?, '', NULL, NULL, ?, NULL)
+        VALUES (?, ?, ?, 'processing', ?, ?, ?, '', NULL, NULL, ?, NULL)
         """,
         (
             request_id,
             question,
+            json.dumps(document_ids or []),
             "saving user message",
             CHAT_PROGRESS_STEPS.index("saving user message") + 1,
             len(CHAT_PROGRESS_STEPS),
@@ -295,7 +313,30 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
     if request is None:
         return
     question = str(request["question"])
+    document_ids = [int(value) for value in request.get("selected_document_ids", [])]
     try:
+        if not document_ids:
+            answer = "Select at least one document source before asking a grounded question."
+            assistant_id = save_message(connection, "assistant", answer, [])
+            connection.execute(
+                """
+                UPDATE chat_requests
+                SET status = 'completed', assistant_message_id = ?, completed_at = ?,
+                    progress_step_name = ?, progress_step_index = ?, progress_step_count = ?, error = ''
+                WHERE id = ?
+                """,
+                (
+                    assistant_id,
+                    utcnow(),
+                    "generating final answer",
+                    len(CHAT_PROGRESS_STEPS),
+                    len(CHAT_PROGRESS_STEPS),
+                    request_id,
+                ),
+            )
+            connection.commit()
+            return
+
         settings = load_provider_settings(connection)
         if not settings.is_configured():
             raise ProviderError("Configure a provider before starting chat.")
@@ -307,7 +348,7 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
 
         update_chat_request_progress(connection, request_id, "searching candidate notes")
         connection.commit()
-        candidates = search_candidate_notes(connection, question)
+        candidates = search_candidate_notes(connection, question, document_ids=document_ids)
 
         update_chat_request_progress(connection, request_id, "picking source references")
         connection.commit()
@@ -317,7 +358,7 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
 
         update_chat_request_progress(connection, request_id, "loading source blocks")
         connection.commit()
-        sources = _load_sources(connection, picked_source_ids)
+        sources = _load_sources(connection, picked_source_ids, document_ids)
 
         update_chat_request_progress(connection, request_id, "generating final answer")
         connection.commit()
@@ -389,17 +430,17 @@ def _generate_answer(
     return answer, citations
 
 
-def answer_question(connection: sqlite3.Connection, question: str) -> dict[str, object]:
+def answer_question(connection: sqlite3.Connection, question: str, document_ids: list[int] | None = None) -> dict[str, object]:
     settings = load_provider_settings(connection)
     if not settings.is_configured():
         raise ProviderError("Configure a provider before starting chat.")
     provider = build_provider(settings)
     history = recent_messages(connection)
-    candidates = search_candidate_notes(connection, question)
+    candidates = search_candidate_notes(connection, question, document_ids=document_ids)
     picked_source_ids = _pick_source_ids(provider, question, history, candidates)
     if not picked_source_ids:
         picked_source_ids = list(OrderedDict.fromkeys(candidate["source_id"] for candidate in candidates[:4]))
-    sources = _load_sources(connection, picked_source_ids)
+    sources = _load_sources(connection, picked_source_ids, document_ids)
     answer, citations = _generate_answer(provider, history, question, sources)
     assistant_id = save_message(connection, "assistant", answer, citations)
     return {"id": assistant_id, "content": answer, "citations": citations}

@@ -42,7 +42,7 @@ def configure_provider(connection) -> None:
     connection.commit()
 
 
-def seed_note(connection) -> int:
+def seed_note(connection) -> tuple[int, int]:
     document_id = connection.execute(
         """
         INSERT INTO documents (
@@ -74,7 +74,7 @@ def seed_note(connection) -> int:
         ),
     )
     connection.commit()
-    return int(source_id)
+    return int(document_id), int(source_id)
 
 
 def test_continue_chat_request_updates_final_progress(tmp_path: Path, monkeypatch) -> None:
@@ -82,8 +82,8 @@ def test_continue_chat_request_updates_final_progress(tmp_path: Path, monkeypatc
     init_db(config.database_path)
     connection = connect(config.database_path)
     configure_provider(connection)
-    source_id = seed_note(connection)
-    request = create_chat_request(connection, "How are sources ranked?")
+    document_id, source_id = seed_note(connection)
+    request = create_chat_request(connection, "How are sources ranked?", [document_id])
     connection.close()
 
     monkeypatch.setattr(
@@ -121,11 +121,15 @@ def test_continue_chat_request_persists_failed_step(tmp_path: Path, monkeypatch)
     init_db(config.database_path)
     connection = connect(config.database_path)
     configure_provider(connection)
-    create_chat_request(connection, "How are sources ranked?")
-    request = create_chat_request(connection, "What does the doc say?")
+    document_id, _source_id = seed_note(connection)
+    create_chat_request(connection, "How are sources ranked?", [document_id])
+    request = create_chat_request(connection, "What does the doc say?", [document_id])
     connection.close()
 
-    monkeypatch.setattr("terrismen.services.chat.search_candidate_notes", lambda connection, question: (_ for _ in ()).throw(RuntimeError("search failed")))
+    monkeypatch.setattr(
+        "terrismen.services.chat.search_candidate_notes",
+        lambda connection, question, **kwargs: (_ for _ in ()).throw(RuntimeError("search failed")),
+    )
 
     continue_chat_request(config, request["id"])
 

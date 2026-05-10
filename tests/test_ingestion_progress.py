@@ -4,7 +4,7 @@ from pathlib import Path
 
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db
-from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion
+from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion, retry_document_ingestion
 from terrismen.services.notes import GeneratedNote, MysteryResolution
 from terrismen.services.parsers import ParsedSource, ParserError
 
@@ -33,10 +33,10 @@ def configure_provider(connection) -> None:
     connection.execute(
         """
         UPDATE settings
-        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?
+        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
         WHERE id = 1
         """,
-        ("ollama", "http://localhost:11434", "llama3.2", "", 0.2),
+        ("ollama", "http://localhost:11434", "llama3.2", "", 0.2, 600.0),
     )
     connection.commit()
 
@@ -151,3 +151,168 @@ def test_continue_document_ingestion_persists_failed_step(tmp_path: Path, monkey
     assert row["progress_step_name"] == "parsing document"
     assert row["progress_step_index"] == 3
     check_connection.close()
+
+
+def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute("UPDATE documents SET status = 'failed', progress_step_name = ?, progress_step_index = ?, error = ? WHERE id = ?", ("generating notes", 5, "provider failed", document_id))
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Page 1", 1, "content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "note", "k"),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (document_id, source_id, note_id, question, reason, keywords, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'open', 'now')
+        """,
+        (document_id, source_id, note_id, "mystery?", "", ""),
+    )
+    connection.commit()
+
+    payload = retry_document_ingestion(connection, document_id)
+
+    row = connection.execute(
+        """
+        SELECT status, error, kind, progress_step_name,
+               (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = documents.id) AS mystery_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+
+    assert payload["status"] == "processing"
+    assert row["status"] == "processing"
+    assert row["error"] == ""
+    assert row["kind"] == ""
+    assert row["progress_step_name"] == "parsing document"
+    assert row["source_count"] == 0
+    assert row["note_count"] == 0
+    assert row["mystery_count"] == 0
+    connection.close()
+
+
+def test_retry_document_ingestion_reuses_existing_outputs_for_mystery_stage(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'failed', progress_step_name = ?, progress_step_index = ?, error = ? WHERE id = ?",
+        ("text", "resolving mysteries", 6, "resolution failed", document_id),
+    )
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Page 1", 1, "content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "note", "k"),
+    ).lastrowid
+    mystery_id = connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (
+            document_id, source_id, note_id, question, reason, keywords, status,
+            resolution_summary, resolution_note_id, resolution_source_id, created_at, resolved_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'resolved', ?, ?, ?, 'now', 'now')
+        """,
+        (document_id, source_id, note_id, "mystery?", "", "", "resolved text", note_id, source_id),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO mystery_refs (mystery_id, relation_type, note_id, source_id, ref_rank, why_relevant)
+        VALUES (?, 'resolution_note', ?, NULL, 1, '')
+        """,
+        (mystery_id, note_id),
+    )
+    connection.commit()
+
+    payload = retry_document_ingestion(connection, document_id)
+
+    row = connection.execute(
+        """
+        SELECT status, error, kind, progress_step_name,
+               (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    mystery_row = connection.execute(
+        """
+        SELECT status, resolution_summary, resolution_note_id, resolution_source_id, resolved_at
+        FROM unresolved_mysteries
+        WHERE document_id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    ref_count = connection.execute("SELECT COUNT(*) FROM mystery_refs WHERE mystery_id = ?", (mystery_id,)).fetchone()[0]
+
+    assert payload["status"] == "processing"
+    assert row["status"] == "processing"
+    assert row["error"] == ""
+    assert row["kind"] == "text"
+    assert row["progress_step_name"] == "resolving mysteries"
+    assert row["source_count"] == 1
+    assert row["note_count"] == 1
+    assert mystery_row["status"] == "open"
+    assert mystery_row["resolution_summary"] == ""
+    assert mystery_row["resolution_note_id"] is None
+    assert mystery_row["resolution_source_id"] is None
+    assert mystery_row["resolved_at"] is None
+    assert ref_count == 0
+    connection.close()
+
+
+def test_retry_document_ingestion_rejects_non_failed_documents(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+
+    try:
+        retry_document_ingestion(connection, document_id)
+    except ValueError as exc:
+        assert str(exc) == "Only failed documents can be retried"
+    else:
+        raise AssertionError("retry_document_ingestion should reject non-failed documents")
+
+    connection.close()

@@ -59,6 +59,31 @@ def update_document_progress(connection: sqlite3.Connection, document_id: int, s
     )
 
 
+def _delete_document_outputs(connection: sqlite3.Connection, document_id: int) -> None:
+    connection.execute("DELETE FROM sources WHERE document_id = ?", (document_id,))
+    connection.execute("DELETE FROM notes WHERE document_id = ?", (document_id,))
+    connection.execute("DELETE FROM unresolved_mysteries WHERE document_id = ?", (document_id,))
+
+
+def _reset_document_mystery_resolution_state(connection: sqlite3.Connection, document_id: int) -> None:
+    connection.execute(
+        "DELETE FROM mystery_refs WHERE mystery_id IN (SELECT id FROM unresolved_mysteries WHERE document_id = ?)",
+        (document_id,),
+    )
+    connection.execute(
+        """
+        UPDATE unresolved_mysteries
+        SET status = 'open',
+            resolution_summary = '',
+            resolution_note_id = NULL,
+            resolution_source_id = NULL,
+            resolved_at = NULL
+        WHERE document_id = ?
+        """,
+        (document_id,),
+    )
+
+
 def _insert_mystery(
     connection: sqlite3.Connection,
     *,
@@ -279,11 +304,57 @@ def continue_document_ingestion(config: AppConfig, document_id: int) -> None:
         _continue_document_ingestion(connection, config, document_id=document_id)
 
 
+def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT id, status, progress_step_name
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Document not found")
+    if row["status"] != "failed":
+        raise ValueError("Only failed documents can be retried")
+
+    resume_step = row["progress_step_name"] or "parsing document"
+    if resume_step in {"resolving mysteries", "finalizing document"}:
+        resume_step = "resolving mysteries"
+        _reset_document_mystery_resolution_state(connection, document_id)
+    else:
+        resume_step = "parsing document"
+        _delete_document_outputs(connection, document_id)
+        connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
+
+    update_document_progress(connection, document_id, resume_step)
+    connection.execute(
+        "UPDATE documents SET status = 'processing', error = '' WHERE id = ?",
+        (document_id,),
+    )
+    connection.commit()
+
+    document = connection.execute(
+        """
+        SELECT id, original_name, kind, status, progress_step_name, progress_step_index, progress_step_count,
+               error, created_at,
+               (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
+               (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id) AS mystery_count,
+               (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id AND unresolved_mysteries.status = 'open') AS open_mystery_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    return dict(document)
+
+
 def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConfig, *, document_id: int) -> None:
     try:
         document_row = connection.execute(
             """
-            SELECT id, original_name, stored_path, media_type
+            SELECT id, original_name, stored_path, media_type, progress_step_name
             FROM documents
             WHERE id = ?
             """,
@@ -294,66 +365,69 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
         original_name = document_row["original_name"]
         stored_path = Path(document_row["stored_path"])
         settings = load_provider_settings(connection)
-        update_document_progress(connection, document_id, "parsing document")
-        connection.commit()
-        kind, parsed_sources = parse_document(stored_path, config.images_dir)
-        update_document_progress(connection, document_id, "describing images")
-        connection.commit()
         provider = build_provider(settings)
-        connection.execute("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
-        update_document_progress(connection, document_id, "generating notes")
-        connection.commit()
+        resume_step = document_row["progress_step_name"] or "parsing document"
+        if resume_step != "resolving mysteries":
+            update_document_progress(connection, document_id, "parsing document")
+            connection.commit()
+            kind, parsed_sources = parse_document(stored_path, config.images_dir)
+            update_document_progress(connection, document_id, "describing images")
+            connection.commit()
+            connection.execute("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
+            update_document_progress(connection, document_id, "generating notes")
+            connection.commit()
 
-        for source in parsed_sources:
-            source_cursor = connection.execute(
-                """
-                INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
-                VALUES (?, ?, ?, ?, '', ?, ?)
-                """,
-                (
-                    document_id,
-                    source.locator,
-                    source.page_number,
-                    source.content,
-                    json.dumps(source.metadata),
-                    utcnow(),
-                ),
-            )
-            source_id = int(source_cursor.lastrowid)
-            image_descriptions = describe_images(provider, source) if source.images else []
-            for (image_path, image), description in zip(source.images, image_descriptions, strict=False):
-                connection.execute(
+            for source in parsed_sources:
+                source_cursor = connection.execute(
                     """
-                    INSERT INTO source_images (source_id, image_path, mime_type, description)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, '', ?, ?)
                     """,
-                    (source_id, str(image_path), image.mime_type, description),
+                    (
+                        document_id,
+                        source.locator,
+                        source.page_number,
+                        source.content,
+                        json.dumps(source.metadata),
+                        utcnow(),
+                    ),
                 )
-            if image_descriptions:
-                connection.execute(
-                    "UPDATE sources SET image_summary = ? WHERE id = ?",
-                    ("\n".join(image_descriptions), source_id),
+                source_id = int(source_cursor.lastrowid)
+                image_descriptions = describe_images(provider, source) if source.images else []
+                for (image_path, image), description in zip(source.images, image_descriptions, strict=False):
+                    connection.execute(
+                        """
+                        INSERT INTO source_images (source_id, image_path, mime_type, description)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (source_id, str(image_path), image.mime_type, description),
+                    )
+                if image_descriptions:
+                    connection.execute(
+                        "UPDATE sources SET image_summary = ? WHERE id = ?",
+                        ("\n".join(image_descriptions), source_id),
+                    )
+                generated_note = generate_note(provider, original_name, source, image_descriptions)
+                note_cursor = connection.execute(
+                    """
+                    INSERT INTO notes (document_id, source_id, note, keywords, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (document_id, source_id, generated_note.note_text, generated_note.keywords, utcnow()),
                 )
-            generated_note = generate_note(provider, original_name, source, image_descriptions)
-            note_cursor = connection.execute(
-                """
-                INSERT INTO notes (document_id, source_id, note, keywords, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (document_id, source_id, generated_note.note_text, generated_note.keywords, utcnow()),
-            )
-            note_id = int(note_cursor.lastrowid)
-            for mystery in generated_note.mysteries:
-                _insert_mystery(
-                    connection,
-                    document_id=document_id,
-                    source_id=source_id,
-                    note_id=note_id,
-                    draft=mystery,
-                )
+                note_id = int(note_cursor.lastrowid)
+                for mystery in generated_note.mysteries:
+                    _insert_mystery(
+                        connection,
+                        document_id=document_id,
+                        source_id=source_id,
+                        note_id=note_id,
+                        draft=mystery,
+                    )
 
-        update_document_progress(connection, document_id, "resolving mysteries")
-        connection.commit()
+            update_document_progress(connection, document_id, "resolving mysteries")
+            connection.commit()
+
         _resolve_document_mysteries(connection, provider=provider, document_id=document_id, document_name=original_name)
         update_document_progress(connection, document_id, "finalizing document")
         connection.execute(

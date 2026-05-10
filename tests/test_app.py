@@ -170,6 +170,7 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     assert "Notes" in response.text
     assert "note-type-filter" in response.text
     assert 'class="shell notes-shell"' in response.text
+    assert "<main>" in response.text
 
 
 def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None:

@@ -19,26 +19,28 @@
       </div>
     </header>
 
-    <section class="panel notes-viewer" aria-labelledby="notes-title">
-      <div class="split-header notes-controls">
-        <label>
-          Show
-          <select id="note-type-filter">
-            <option value="normal">Notes</option>
-            <option value="mystery">Unresolved questions</option>
-          </select>
-        </label>
-        <span id="notes-count" class="tag">Loading…</span>
-      </div>
+    <main>
+      <section class="panel notes-viewer" aria-labelledby="notes-title">
+        <div class="split-header notes-controls">
+          <label>
+            Show
+            <select id="note-type-filter">
+              <option value="normal">Notes</option>
+              <option value="mystery">Unresolved questions</option>
+            </select>
+          </label>
+          <span id="notes-count" class="tag">Loading…</span>
+        </div>
 
-      <div id="notes-list" class="notes-list" aria-live="polite"></div>
+        <div id="notes-list" class="notes-list" aria-live="polite"></div>
 
-      <nav class="pager" aria-label="Notes pagination">
-        <button id="notes-prev" class="secondary" type="button">Previous</button>
-        <span id="notes-page-label" class="meta">Page 1</span>
-        <button id="notes-next" class="secondary" type="button">Next</button>
-      </nav>
-    </section>
+        <nav class="pager" aria-label="Notes pagination">
+          <button id="notes-prev" class="secondary" type="button">Previous</button>
+          <span id="notes-page-label" class="meta">Page 1</span>
+          <button id="notes-next" class="secondary" type="button">Next</button>
+        </nav>
+      </section>
+    </main>
   </div>
   <script type="module" src="/static/notes.js"></script>
 </body>

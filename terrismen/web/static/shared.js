@@ -13,6 +13,15 @@ export async function api(path, options = {}) {
   return payload;
 }
 
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export function getSettingsState(settings) {
   return isSettingsConfigured(settings)
     ? { label: "Configured", className: "tag tag-success" }

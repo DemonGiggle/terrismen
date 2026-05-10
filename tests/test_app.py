@@ -25,6 +25,8 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Start Process" in response.text
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
+    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/app.js?v=asset-ui-fixes-20260510' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
@@ -37,6 +39,8 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert 'id="settings-form"' in response.text
     assert "Back to workspace" in response.text
     assert "LLM timeout (seconds)" in response.text
+    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/settings.js?v=asset-ui-fixes-20260510' in response.text
 
 
 def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
@@ -171,6 +175,10 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     assert "note-type-filter" in response.text
     assert 'class="shell notes-shell"' in response.text
     assert "<main>" in response.text
+    assert 'aria-label="Previous page of notes"' in response.text
+    assert 'aria-label="Next page of notes"' in response.text
+    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/notes.js?v=asset-ui-fixes-20260510' in response.text
 
 
 def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None:

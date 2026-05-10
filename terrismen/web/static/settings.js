@@ -1,4 +1,4 @@
-import { api, getSettingsState, summarizeSettings } from "./shared.js";
+import { api, getSettingsState, summarizeSettings } from "./shared.js?v=asset-ui-fixes-20260510";
 
 const elements = {
   status: document.querySelector("#status-pill"),

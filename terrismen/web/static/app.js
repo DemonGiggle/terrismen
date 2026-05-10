@@ -3,6 +3,8 @@ import { api, getSettingsState, summarizeSettings } from "./shared.js";
 const state = {
   documents: [],
   selectedDocumentId: null,
+  checkedDocumentIds: new Set(),
+  hasInitializedDocumentSelection: false,
   messages: [],
   documentRefreshTimer: null,
   documentRefreshInFlight: false,
@@ -71,13 +73,28 @@ function renderDocuments() {
       const progress = describeDocumentProgress(documentItem);
       return `
         <article class="document-card${active}" data-document-id="${documentItem.id}">
-          <div class="split-header">
-            <strong>${escapeHtml(documentItem.original_name)}</strong>
-            <span class="tag">${escapeHtml(describeDocumentState(documentItem.status))}</span>
+          <label class="document-select-row">
+            <input
+              type="checkbox"
+              class="document-source-checkbox"
+              data-document-checkbox-id="${documentItem.id}"
+              ${state.checkedDocumentIds.has(documentItem.id) ? "checked" : ""}
+              aria-label="Use ${escapeAttribute(documentItem.original_name)} for chat"
+            >
+            <span class="document-card-main">
+              <span class="split-header">
+                <strong>${escapeHtml(documentItem.original_name)}</strong>
+                <span class="tag">${escapeHtml(describeDocumentState(documentItem.status))}</span>
+              </span>
+              ${progress ? `<span class="meta">${escapeHtml(progress)}</span>` : ""}
+              <span class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</span>
+              ${documentItem.error ? `<span class="meta">${escapeHtml(documentItem.error)}</span>` : ""}
+            </span>
+          </label>
+          <div class="document-card-actions">
+            <a class="button-link secondary compact-action" href="/documents/${documentItem.id}/notes" data-document-action="view">View</a>
+            <button class="secondary compact-action" type="button" data-document-action="delete" disabled title="Deletion is handled in a dedicated change">Delete</button>
           </div>
-          ${progress ? `<div class="meta">${escapeHtml(progress)}</div>` : ""}
-          <div class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</div>
-          ${documentItem.error ? `<div class="meta">${escapeHtml(documentItem.error)}</div>` : ""}
         </article>
       `;
     })
@@ -380,7 +397,19 @@ async function loadDocuments() {
 function syncSelectedDocument() {
   if (!state.documents.length) {
     state.selectedDocumentId = null;
+    state.checkedDocumentIds.clear();
+    state.hasInitializedDocumentSelection = false;
     return;
+  }
+  const availableIds = new Set(state.documents.map((documentItem) => documentItem.id));
+  state.checkedDocumentIds = new Set([...state.checkedDocumentIds].filter((documentId) => availableIds.has(documentId)));
+  if (!state.hasInitializedDocumentSelection) {
+    for (const documentItem of state.documents) {
+      if (documentItem.status === "ready") {
+        state.checkedDocumentIds.add(documentItem.id);
+      }
+    }
+    state.hasInitializedDocumentSelection = true;
   }
   if (!state.documents.some((documentItem) => documentItem.id === state.selectedDocumentId)) {
     state.selectedDocumentId = state.documents[0].id;
@@ -433,7 +462,7 @@ function setUploadBusy(isBusy) {
   const hasFile = Boolean(elements.uploadInput.files?.length);
   elements.uploadSubmit.disabled = isBusy || !hasFile;
   elements.uploadInput.disabled = isBusy;
-  elements.uploadSubmit.textContent = isBusy ? "Starting processing..." : "Start processing document";
+  elements.uploadSubmit.textContent = isBusy ? "Starting processing..." : "Add Doc";
 }
 
 function renderUploadSelection() {
@@ -552,6 +581,8 @@ elements.uploadForm.addEventListener("submit", async (event) => {
     elements.uploadForm.reset();
     renderUploadSelection();
     await loadDocuments();
+    state.checkedDocumentIds.add(documentItem.id);
+    renderDocuments();
     setUploadFeedback(`Processing started for ${documentItem.original_name}. We will keep the current step visible while ingestion runs.`);
     setStatus(`Started ${documentItem.original_name}`);
   } catch (error) {
@@ -564,6 +595,21 @@ elements.uploadForm.addEventListener("submit", async (event) => {
 elements.documents.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-document-id]");
   if (!target) {
+    return;
+  }
+  if (event.target.closest("[data-document-action]")) {
+    return;
+  }
+  const checkbox = event.target.closest("[data-document-checkbox-id]");
+  if (checkbox) {
+    const documentId = Number(checkbox.dataset.documentCheckboxId);
+    if (checkbox.checked) {
+      state.checkedDocumentIds.add(documentId);
+    } else {
+      state.checkedDocumentIds.delete(documentId);
+    }
+    setStatus(`${state.checkedDocumentIds.size} source${state.checkedDocumentIds.size === 1 ? "" : "s"} selected`);
+    renderDocuments();
     return;
   }
   selectDocument(target.dataset.documentId);

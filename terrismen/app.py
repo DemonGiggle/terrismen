@@ -99,7 +99,7 @@ def health() -> dict[str, str]:
 @app.get("/api/settings")
 def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
-        "SELECT provider_type, base_url, model, api_key, temperature FROM settings WHERE id = 1"
+        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
     ).fetchone()
     return row_to_dict(row) or {}
 
@@ -109,10 +109,17 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
     connection.execute(
         """
         UPDATE settings
-        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?
+        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
         WHERE id = 1
         """,
-        (payload.provider_type, payload.base_url, payload.model, payload.api_key, payload.temperature),
+        (
+            payload.provider_type,
+            payload.base_url,
+            payload.model,
+            payload.api_key,
+            payload.temperature,
+            payload.llm_timeout_seconds,
+        ),
     )
     connection.commit()
     return get_settings(connection)

@@ -72,6 +72,7 @@ terrismen
 - Base URL: `https://your-provider.example.com`
 - Model: provider-specific model name
 - API key: provider-specific
+- Timeout: default `600` seconds, configurable in Settings
 
 ### Ollama
 
@@ -79,6 +80,7 @@ terrismen
 - Base URL: `http://localhost:11434`
 - Model: `llama3.2-vision` or another installed model
 - API key: leave blank
+- Timeout: default `600` seconds, configurable in Settings
 
 ## Notes on source references
 

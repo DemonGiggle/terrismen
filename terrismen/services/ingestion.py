@@ -36,7 +36,7 @@ def allowed_extension(name: str) -> bool:
 
 def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
     row = connection.execute(
-        "SELECT provider_type, base_url, model, api_key, temperature FROM settings WHERE id = 1"
+        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
     ).fetchone()
     return ProviderSettings(
         provider_type=row["provider_type"],
@@ -44,6 +44,7 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
         model=row["model"],
         api_key=row["api_key"],
         temperature=row["temperature"],
+        llm_timeout_seconds=row["llm_timeout_seconds"],
     )
 
 

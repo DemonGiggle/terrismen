@@ -14,6 +14,7 @@ class ProviderSettingsPayload(BaseModel):
     model: str = Field(min_length=1)
     api_key: str = ""
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
+    llm_timeout_seconds: float = Field(default=600.0, ge=60.0, le=3600.0)
 
     @field_validator("base_url", "model", mode="before")
     @classmethod

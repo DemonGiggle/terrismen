@@ -10,7 +10,7 @@ from terrismen.llm.base import BaseProvider, ImageInput, ProviderError
 class OllamaProvider(BaseProvider):
     def __init__(self, settings) -> None:
         super().__init__(settings)
-        self._client = httpx.Client(timeout=180.0)
+        self._client = httpx.Client(timeout=httpx.Timeout(settings.llm_timeout_seconds, connect=30.0))
 
     def _endpoint(self) -> str:
         return f"{self.settings.base_url.rstrip('/')}/api/chat"

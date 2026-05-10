@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS settings (
     base_url TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
     api_key TEXT NOT NULL DEFAULT '',
-    temperature REAL NOT NULL DEFAULT 0.2
+    temperature REAL NOT NULL DEFAULT 0.2,
+    llm_timeout_seconds REAL NOT NULL DEFAULT 600.0
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -207,11 +208,12 @@ def init_db(database_path: Path) -> None:
         _ensure_column(connection, "documents", "progress_step_name", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(connection, "documents", "progress_step_index", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "documents", "progress_step_count", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, "settings", "llm_timeout_seconds", "REAL NOT NULL DEFAULT 600.0")
         _ensure_column(connection, "chat_requests", "selected_document_ids_json", "TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             """
-            INSERT INTO settings (id, provider_type, base_url, model, api_key, temperature)
-            VALUES (1, '', '', '', '', 0.2)
+            INSERT INTO settings (id, provider_type, base_url, model, api_key, temperature, llm_timeout_seconds)
+            VALUES (1, '', '', '', '', 0.2, 600.0)
             ON CONFLICT(id) DO NOTHING
             """
         )

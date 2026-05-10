@@ -39,6 +39,7 @@ export function summarizeSettings(settings) {
     settings.model,
     settings.base_url,
     settings.api_key ? "API key saved" : "No API key saved",
+    `${Math.round(settings.llm_timeout_seconds ?? 600)}s timeout`,
   ].join(" • ");
 }
 

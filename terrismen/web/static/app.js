@@ -61,11 +61,8 @@ function describeDocumentProgress(documentItem) {
 function renderDocuments() {
   renderChatScope();
   if (!state.documents.length) {
-    elements.documents.className = "document-list empty document-empty-state";
-    elements.documents.innerHTML = `
-      <strong>No documents yet</strong>
-      <p class="meta">Add one to start chatting.</p>
-    `;
+    elements.documents.className = "document-list empty";
+    elements.documents.textContent = "No documents yet.";
     return;
   }
 

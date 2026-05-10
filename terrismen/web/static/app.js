@@ -30,6 +30,7 @@ const elements = {
   chatInput: document.querySelector("#chat-input"),
   chatSubmit: document.querySelector("#chat-submit"),
   chatProgress: document.querySelector("#chat-progress"),
+  chatScopeLabel: document.querySelector("#chat-scope-label"),
   chatLog: document.querySelector("#chat-log"),
   clearChat: document.querySelector("#clear-chat"),
 };
@@ -58,11 +59,12 @@ function describeDocumentProgress(documentItem) {
 }
 
 function renderDocuments() {
+  renderChatScope();
   if (!state.documents.length) {
     elements.documents.className = "document-list empty document-empty-state";
     elements.documents.innerHTML = `
       <strong>No documents yet</strong>
-      <p class="meta">Use Add doc to upload your first source for chat.</p>
+      <p class="meta">Add one to start chatting.</p>
     `;
     return;
   }
@@ -127,7 +129,7 @@ function summarizeSourceNote(note) {
 function renderMessages() {
   if (!state.messages.length) {
     elements.chatLog.className = "chat-log empty";
-    elements.chatLog.textContent = "Chat history will appear here.";
+    elements.chatLog.textContent = "Ask a question to begin.";
     return;
   }
 
@@ -164,11 +166,13 @@ function describeChatProgress(request) {
 
 function renderChatProgress(request) {
   if (!request) {
+    elements.chatProgress.hidden = true;
     elements.chatProgress.className = "chat-progress empty";
-    elements.chatProgress.textContent = "Chat request progress will appear here while an answer is running.";
+    elements.chatProgress.textContent = "";
     return;
   }
 
+  elements.chatProgress.hidden = false;
   elements.chatProgress.className = "chat-progress";
   if (request.status === "failed") {
     elements.chatProgress.textContent = [describeChatProgress(request), request.error || null].filter(Boolean).join(" • ");
@@ -490,8 +494,9 @@ function setChatBusy(isBusy) {
   elements.clearChat.disabled = isBusy;
   elements.chatSubmit.textContent = isBusy ? "Working..." : "Ask";
   if (lockedForIngestion && !isBusy) {
+    elements.chatProgress.hidden = false;
     elements.chatProgress.className = "chat-progress";
-    elements.chatProgress.textContent = "Chat is locked while document ingestion is running.";
+    elements.chatProgress.textContent = "Chat will unlock when processing finishes.";
   } else if (!lockedForIngestion && !isBusy && state.activeChatRequestId === null) {
     renderChatProgress(null);
   }
@@ -499,6 +504,15 @@ function setChatBusy(isBusy) {
 
 function getCheckedDocumentIds() {
   return [...state.checkedDocumentIds];
+}
+
+function renderChatScope() {
+  const count = state.checkedDocumentIds.size;
+  if (!state.documents.length) {
+    elements.chatScopeLabel.textContent = "Add documents to start";
+    return;
+  }
+  elements.chatScopeLabel.textContent = count === 1 ? "Using 1 document" : `Using ${count} documents`;
 }
 
 function setUploadBusy(isBusy) {
@@ -512,9 +526,9 @@ function renderUploadSelection() {
   const selectedFile = elements.uploadInput.files?.[0] ?? null;
   if (!selectedFile) {
     elements.uploadSelection.className = "upload-selection empty";
-    elements.uploadSelectionName.textContent = "No file selected yet";
-    elements.uploadSelectionMeta.textContent = "Pick a file to enable processing.";
-    setUploadFeedback("Choose a file first to begin processing.");
+    elements.uploadSelectionName.textContent = "";
+    elements.uploadSelectionMeta.textContent = "";
+    setUploadFeedback("");
     setUploadBusy(false);
     return;
   }
@@ -522,7 +536,7 @@ function renderUploadSelection() {
   elements.uploadSelection.className = "upload-selection";
   elements.uploadSelectionName.textContent = selectedFile.name;
   elements.uploadSelectionMeta.textContent = `${formatFileSize(selectedFile.size)} • Ready to process`;
-  setUploadFeedback("Ready to start processing.");
+  setUploadFeedback("Ready.");
   setUploadBusy(false);
 }
 
@@ -627,7 +641,7 @@ elements.uploadForm.addEventListener("submit", async (event) => {
     await loadDocuments();
     state.checkedDocumentIds.add(documentItem.id);
     renderDocuments();
-    setUploadFeedback(`Processing started for ${documentItem.original_name}. We will keep the current step visible while ingestion runs.`);
+    setUploadFeedback(`Processing ${documentItem.original_name}...`);
     setStatus(`Started ${documentItem.original_name}`);
   } catch (error) {
     setUploadBusy(false);
@@ -670,7 +684,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
     return;
   }
   if (hasProcessingDocuments()) {
-    setStatus("Chat is locked during document ingestion");
+    setStatus("Chat will unlock when processing finishes");
     setChatBusy(false);
     return;
   }

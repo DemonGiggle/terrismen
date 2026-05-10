@@ -21,8 +21,8 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert response.status_code == 200
     assert 'href="/settings"' in response.text
     assert 'id="settings-form"' not in response.text
-    assert "Chat workspace" in response.text
-    assert "Grounded chat" in response.text
+    assert "Ask your documents." in response.text
+    assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
 
 
@@ -85,7 +85,7 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     response = client.get("/documents/123/notes")
 
     assert response.status_code == 200
-    assert "Document Notes" in response.text
+    assert "Notes" in response.text
     assert "note-type-filter" in response.text
 
 

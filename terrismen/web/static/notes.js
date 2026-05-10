@@ -32,8 +32,8 @@ function escapeHtml(value) {
 function renderEmpty(payload) {
   elements.list.innerHTML = `
     <div class="empty-state">
-      <strong>No ${payload.note_type === "mystery" ? "mysterious" : "normal"} notes yet.</strong>
-      <p>${payload.note_type === "mystery" ? "Mysteries will appear here when ingestion flags unresolved questions." : "Generated notes will appear here after document ingestion completes."}</p>
+      <strong>No ${payload.note_type === "mystery" ? "unresolved questions" : "notes"} yet.</strong>
+      <p>${payload.note_type === "mystery" ? "Questions found during processing will appear here." : "Notes will appear here after processing."}</p>
     </div>
   `;
 }
@@ -68,8 +68,8 @@ function renderMysteryNote(item) {
 
 function renderPayload(payload) {
   elements.title.textContent = payload.document.original_name;
-  elements.subtitle.textContent = `Dedicated notes viewer for ${payload.document.status} document sources.`;
-  elements.count.textContent = `${payload.total} ${payload.note_type === "mystery" ? "mysteries" : "notes"}`;
+  elements.subtitle.textContent = `${payload.document.status} document`;
+  elements.count.textContent = `${payload.total} ${payload.note_type === "mystery" ? "questions" : "notes"}`;
   state.totalPages = payload.total_pages;
   elements.pageLabel.textContent = payload.total_pages ? `Page ${payload.page} of ${payload.total_pages}` : "Page 0 of 0";
   elements.previous.disabled = payload.page <= 1;

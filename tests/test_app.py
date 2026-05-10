@@ -102,6 +102,64 @@ def test_chat_returns_request_progress_payload(tmp_path, monkeypatch) -> None:
     assert payload["selected_document_ids"] == []
 
 
+def test_retry_document_endpoint_restarts_failed_document(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "continue_document_ingestion", lambda config, document_id: None)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    connection.execute(
+        """
+        UPDATE settings
+        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
+        WHERE id = 1
+        """,
+        ("ollama", "http://localhost:11434", "llama3.2", "", 0.2, 600.0),
+    )
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "failed", "parsing document", 3, 7, "parse failed", "now"),
+    ).lastrowid
+    connection.commit()
+    connection.close()
+
+    response = client.post(f"/api/documents/{document_id}/retry")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "processing"
+    assert payload["error"] == ""
+
+
+def test_retry_document_endpoint_rejects_non_failed_document(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "continue_document_ingestion", lambda config, document_id: None)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "processing", "parsing document", 3, 7, "", "now"),
+    ).lastrowid
+    connection.commit()
+    connection.close()
+
+    response = client.post(f"/api/documents/{document_id}/retry")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only failed documents can be retried"
+
+
 def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     app_module = load_app_module(tmp_path, monkeypatch)
     client = TestClient(app_module.app)

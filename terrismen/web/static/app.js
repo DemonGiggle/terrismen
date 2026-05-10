@@ -50,6 +50,10 @@ function describeDocumentState(status) {
   return status === "ready" ? "complete" : status;
 }
 
+function isDocumentReady(documentItem) {
+  return documentItem.status === "ready";
+}
+
 function describeDocumentProgress(documentItem) {
   if (!documentItem.progress_step_name || !documentItem.progress_step_index || !documentItem.progress_step_count) {
     return "";
@@ -78,7 +82,8 @@ function renderDocuments() {
               type="checkbox"
               class="document-source-checkbox"
               data-document-checkbox-id="${documentItem.id}"
-              ${state.checkedDocumentIds.has(documentItem.id) ? "checked" : ""}
+              ${isDocumentReady(documentItem) && state.checkedDocumentIds.has(documentItem.id) ? "checked" : ""}
+              ${isDocumentReady(documentItem) ? "" : "disabled"}
               aria-label="Use ${escapeAttribute(documentItem.original_name)} for chat"
             >
             <span class="document-card-main">
@@ -92,7 +97,16 @@ function renderDocuments() {
             </span>
           </label>
           <div class="document-card-actions">
-            <a class="button-link secondary compact-action" href="/documents/${documentItem.id}/notes" data-document-action="view">View</a>
+            ${
+              documentItem.source_count || documentItem.note_count || documentItem.mystery_count
+                ? `<a class="button-link secondary compact-action" href="/documents/${documentItem.id}/notes" data-document-action="view">View</a>`
+                : ""
+            }
+            ${
+              documentItem.status === "failed"
+                ? `<button class="secondary compact-action" type="button" data-document-action="retry">Retry</button>`
+                : ""
+            }
             <button class="secondary compact-action" type="button" data-document-action="delete" ${state.deletingDocumentIds.has(documentItem.id) ? "disabled" : ""}>${state.deletingDocumentIds.has(documentItem.id) ? "Deleting..." : "Delete"}</button>
           </div>
         </article>
@@ -404,10 +418,13 @@ function syncSelectedDocument() {
     return;
   }
   const availableIds = new Set(state.documents.map((documentItem) => documentItem.id));
-  state.checkedDocumentIds = new Set([...state.checkedDocumentIds].filter((documentId) => availableIds.has(documentId)));
+  const readyIds = new Set(state.documents.filter(isDocumentReady).map((documentItem) => documentItem.id));
+  state.checkedDocumentIds = new Set(
+    [...state.checkedDocumentIds].filter((documentId) => availableIds.has(documentId) && readyIds.has(documentId)),
+  );
   if (!state.hasInitializedDocumentSelection) {
     for (const documentItem of state.documents) {
-      if (documentItem.status === "ready") {
+      if (isDocumentReady(documentItem)) {
         state.checkedDocumentIds.add(documentItem.id);
       }
     }
@@ -446,6 +463,21 @@ async function deleteDocument(documentId) {
   } finally {
     state.deletingDocumentIds.delete(documentId);
     renderDocuments();
+  }
+}
+
+async function retryDocument(documentId) {
+  const documentItem = state.documents.find((item) => item.id === documentId);
+  const label = documentItem?.original_name || "this document";
+  setStatus(`Retrying ${label}...`);
+  try {
+    state.checkedDocumentIds.delete(documentId);
+    const payload = await api(`/api/documents/${documentId}/retry`, { method: "POST" });
+    state.selectedDocumentId = payload.id;
+    await loadDocuments();
+    setStatus(`Restarted ${label}`);
+  } catch (error) {
+    setStatus(error.message);
   }
 }
 
@@ -657,6 +689,8 @@ elements.documents.addEventListener("click", async (event) => {
   if (action) {
     if (action.dataset.documentAction === "delete") {
       await deleteDocument(Number(target.dataset.documentId));
+    } else if (action.dataset.documentAction === "retry") {
+      await retryDocument(Number(target.dataset.documentId));
     }
     return;
   }

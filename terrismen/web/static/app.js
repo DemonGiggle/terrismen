@@ -54,6 +54,11 @@ function isDocumentReady(documentItem) {
   return documentItem.status === "ready";
 }
 
+function getReadyCheckedDocumentIds() {
+  const readyIds = new Set(state.documents.filter(isDocumentReady).map((documentItem) => documentItem.id));
+  return [...state.checkedDocumentIds].filter((documentId) => readyIds.has(documentId));
+}
+
 function describeDocumentProgress(documentItem) {
   if (!documentItem.progress_step_name || !documentItem.progress_step_index || !documentItem.progress_step_count) {
     return "";
@@ -418,10 +423,7 @@ function syncSelectedDocument() {
     return;
   }
   const availableIds = new Set(state.documents.map((documentItem) => documentItem.id));
-  const readyIds = new Set(state.documents.filter(isDocumentReady).map((documentItem) => documentItem.id));
-  state.checkedDocumentIds = new Set(
-    [...state.checkedDocumentIds].filter((documentId) => availableIds.has(documentId) && readyIds.has(documentId)),
-  );
+  state.checkedDocumentIds = new Set([...state.checkedDocumentIds].filter((documentId) => availableIds.has(documentId)));
   if (!state.hasInitializedDocumentSelection) {
     for (const documentItem of state.documents) {
       if (isDocumentReady(documentItem)) {
@@ -471,7 +473,6 @@ async function retryDocument(documentId) {
   const label = documentItem?.original_name || "this document";
   setStatus(`Retrying ${label}...`);
   try {
-    state.checkedDocumentIds.delete(documentId);
     const payload = await api(`/api/documents/${documentId}/retry`, { method: "POST" });
     state.selectedDocumentId = payload.id;
     await loadDocuments();
@@ -532,11 +533,11 @@ function setChatBusy(isBusy) {
 }
 
 function getCheckedDocumentIds() {
-  return [...state.checkedDocumentIds];
+  return getReadyCheckedDocumentIds();
 }
 
 function renderChatScope() {
-  const count = state.checkedDocumentIds.size;
+  const count = getReadyCheckedDocumentIds().length;
   if (!state.documents.length) {
     elements.chatScopeLabel.textContent = "Add documents to start";
     return;
@@ -702,7 +703,8 @@ elements.documents.addEventListener("click", async (event) => {
     } else {
       state.checkedDocumentIds.delete(documentId);
     }
-    setStatus(`${state.checkedDocumentIds.size} source${state.checkedDocumentIds.size === 1 ? "" : "s"} selected`);
+    const selectedCount = getReadyCheckedDocumentIds().length;
+    setStatus(`${selectedCount} source${selectedCount === 1 ? "" : "s"} selected`);
     renderDocuments();
     return;
   }

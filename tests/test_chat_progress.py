@@ -15,6 +15,16 @@ class FakeProvider:
         return self._responses.pop(0)
 
 
+class RecordingProvider:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(self, system_prompt: str, user_prompt: str, *, images=None) -> str:
+        self.calls.append((system_prompt, user_prompt))
+        return self.response
+
+
 def build_config(tmp_path: Path) -> AppConfig:
     uploads_dir = tmp_path / "uploads"
     images_dir = tmp_path / "images"
@@ -144,3 +154,34 @@ def test_continue_chat_request_persists_failed_step(tmp_path: Path, monkeypatch)
     assert row["progress_step_name"] == "searching candidate notes"
     assert row["progress_step_index"] == 3
     check_connection.close()
+
+
+def test_generate_answer_uses_grounded_citation_prompt(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    _document_id, source_id = seed_note(connection)
+    source = connection.execute(
+        """
+        SELECT sources.id, sources.locator, sources.page_number, sources.content, sources.image_summary,
+               notes.note, documents.original_name
+        FROM sources
+        JOIN notes ON notes.source_id = sources.id
+        JOIN documents ON documents.id = sources.document_id
+        WHERE sources.id = ?
+        """,
+        (source_id,),
+    ).fetchone()
+    provider = RecordingProvider("Grounded answer [spec.pdf - Page 2]")
+
+    from terrismen.services.chat import _generate_answer
+
+    answer, citations = _generate_answer(provider, [], "How are sources ranked?", [source])
+
+    assert answer == "Grounded answer [spec.pdf - Page 2]"
+    assert citations[0]["reference_label"] == "spec.pdf - Page 2"
+    system_prompt, user_prompt = provider.calls[0]
+    assert "Every factual claim must include an inline citation" in system_prompt
+    assert "do not know from the provided sources" in system_prompt
+    assert "Reference: spec.pdf - Page 2" in user_prompt
+    connection.close()

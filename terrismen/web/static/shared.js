@@ -24,8 +24,8 @@ export function escapeHtml(value) {
 
 export function getSettingsState(settings) {
   return isSettingsConfigured(settings)
-    ? { label: "Configured", className: "tag tag-success" }
-    : { label: "Needs setup", className: "tag tag-warning" };
+    ? { isConfigured: true, label: "Configured", className: "tag tag-success is-hidden" }
+    : { isConfigured: false, label: "Setup needed", className: "setup-notice" };
 }
 
 export function summarizeSettings(settings) {

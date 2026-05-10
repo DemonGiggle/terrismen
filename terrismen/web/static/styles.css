@@ -236,6 +236,24 @@ label {
   text-align: right;
 }
 
+.setup-notice {
+  max-width: 18rem;
+  padding: 0.85rem 1rem;
+  border: 2px solid var(--border);
+  background: var(--foreground);
+  color: var(--accent-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  line-height: 1.45;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.is-hidden {
+  display: none;
+}
+
 .workspace-layout,
 .settings-layout {
   display: grid;
@@ -453,7 +471,6 @@ button:focus-visible,
   color: var(--foreground);
 }
 
-.status-pill,
 .tag {
   display: inline-flex;
   align-items: center;
@@ -465,7 +482,6 @@ button:focus-visible,
   color: var(--foreground);
 }
 
-.status-pill,
 .tag-warning {
   background: var(--foreground);
   color: var(--accent-foreground);
@@ -474,6 +490,18 @@ button:focus-visible,
 .tag-success {
   background: var(--background);
   color: var(--foreground);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0.35rem 0 0.25rem;
+  border: 0;
+  border-block: 1px solid currentColor;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: default;
 }
 
 .upload-drop,
@@ -492,9 +520,46 @@ button:focus-visible,
 
 .upload-drop {
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
   padding: 1.75rem;
+  border-width: 2px;
+  cursor: pointer;
+  background-image:
+    linear-gradient(#00000008 1px, transparent 1px),
+    linear-gradient(90deg, #00000008 1px, transparent 1px);
+  background-size: 24px 24px;
   text-align: left;
+  transition: background-color 100ms linear, color 100ms linear, border-width 100ms linear;
+}
+
+.upload-drop::after {
+  content: "Browse";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.65rem 0.95rem;
+  border: 2px solid currentColor;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.upload-drop:hover,
+.upload-drop:focus-within {
+  border-width: 4px;
+  background-color: var(--foreground);
+  color: var(--accent-foreground);
+}
+
+.upload-drop:focus-within {
+  outline: 3px solid var(--foreground);
+  outline-offset: 3px;
 }
 
 .upload-drop input {
@@ -502,14 +567,21 @@ button:focus-visible,
 }
 
 .upload-drop-title {
+  grid-column: 1;
   font-family: var(--font-display);
   font-size: 1.75rem;
   line-height: 1;
 }
 
 .upload-drop-subtitle {
+  grid-column: 1;
   color: var(--muted-foreground);
   font-size: 1rem;
+}
+
+.upload-drop:hover .upload-drop-subtitle,
+.upload-drop:focus-within .upload-drop-subtitle {
+  color: inherit;
 }
 
 .upload-selection,
@@ -562,10 +634,19 @@ button:focus-visible,
 .document-card:hover .tag,
 .source-card:hover .meta,
 .mystery-card:hover .meta,
-.note-card:hover .meta,
-.note-card:hover .tag {
+.note-card:hover .meta {
   color: inherit;
   border-color: currentColor;
+}
+
+.note-card:hover .tag {
+  border-color: var(--accent-foreground);
+  background: var(--accent-foreground);
+  color: var(--foreground);
+}
+
+.note-card:hover h3 {
+  color: var(--accent-foreground);
 }
 
 .document-card.active {
@@ -577,6 +658,19 @@ button:focus-visible,
 .document-card.active .tag {
   color: inherit;
   border-color: currentColor;
+}
+
+.document-card:hover .compact-action,
+.document-card.active .compact-action {
+  border-color: var(--accent-foreground);
+  background: var(--accent-foreground);
+  color: var(--foreground);
+}
+
+.document-card:hover .compact-action:hover,
+.document-card.active .compact-action:hover {
+  background: var(--foreground);
+  color: var(--accent-foreground);
 }
 
 .document-select-row,
@@ -591,6 +685,7 @@ button:focus-visible,
 .document-select-row,
 .source-summary {
   align-items: flex-start;
+  position: relative;
   width: 100%;
 }
 
@@ -602,13 +697,27 @@ button:focus-visible,
 
 .document-card-actions {
   padding-top: 0.5rem;
-  padding-left: 2rem;
+  padding-left: 2.1rem;
 }
 
 .document-source-checkbox {
-  width: auto;
-  margin-top: 0.1rem;
-  accent-color: var(--foreground);
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0.1rem 0 0;
+  border: 2px solid currentColor;
+  accent-color: currentColor;
+  cursor: pointer;
+}
+
+.document-source-checkbox:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 3px;
+}
+
+.document-source-checkbox:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .document-card-main,
@@ -828,8 +937,13 @@ button:focus-visible,
     max-width: none;
   }
 
-  .config-summary .meta {
+  .config-summary .meta,
+  .config-summary .setup-notice {
     text-align: left;
+  }
+
+  .document-select-row {
+    flex-wrap: wrap;
   }
 
   .split-header,

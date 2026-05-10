@@ -24,7 +24,6 @@
         </div>
         <div class="topbar-actions">
           <div class="config-summary">
-            <span class="tag tag-warning" id="settings-indicator">Checking setup...</span>
             <p class="meta" id="settings-summary">Loading provider configuration...</p>
           </div>
           <a class="button-link secondary" href="/settings">Settings</a>
@@ -66,7 +65,11 @@
 
           <section class="document-sidebar-section" aria-label="Document list">
             <div class="split-header">
-              <strong>Sources</strong>
+              <div>
+                <strong>Sources</strong>
+                <p class="meta">Checked documents are used as references when answering chat.</p>
+              </div>
+              <p class="meta" id="source-selection-summary">0 selected</p>
             </div>
             <div id="documents" class="document-list empty">No documents yet.</div>
           </section>

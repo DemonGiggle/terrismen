@@ -551,8 +551,20 @@ input[disabled] {
 }
 
 .chat-form {
+  align-items: end;
   display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.chat-form textarea {
+  min-height: 96px;
+}
+
+.chat-form button {
+  align-self: end;
+  min-width: 96px;
+  width: auto;
 }
 
 .settings-layout {
@@ -599,6 +611,14 @@ input[disabled] {
 
   .upload-helper-grid {
     grid-template-columns: 1fr;
+  }
+
+  .chat-form {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-form button {
+    justify-self: end;
   }
 
   .config-summary {

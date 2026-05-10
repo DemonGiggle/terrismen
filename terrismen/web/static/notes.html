@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terrismen Notes</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=asset-ui-fixes-20260510">
 </head>
 <body>
   <div class="shell notes-shell">
@@ -35,13 +35,13 @@
         <div id="notes-list" class="notes-list" aria-live="polite"></div>
 
         <nav class="pager" aria-label="Notes pagination">
-          <button id="notes-prev" class="secondary" type="button">Previous</button>
-          <span id="notes-page-label" class="meta">Page 1</span>
-          <button id="notes-next" class="secondary" type="button">Next</button>
-        </nav>
-      </section>
-    </main>
+        <button id="notes-prev" class="secondary" type="button" aria-label="Previous page of notes">Previous</button>
+        <span id="notes-page-label" class="meta">Page 1</span>
+        <button id="notes-next" class="secondary" type="button" aria-label="Next page of notes">Next</button>
+      </nav>
+    </section>
+  </main>
   </div>
-  <script type="module" src="/static/notes.js"></script>
+  <script type="module" src="/static/notes.js?v=asset-ui-fixes-20260510"></script>
 </body>
 </html>

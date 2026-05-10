@@ -1,4 +1,4 @@
-import { api, getSettingsState, summarizeSettings } from "./shared.js";
+import { api, escapeHtml, getSettingsState, summarizeSettings } from "./shared.js?v=asset-ui-fixes-20260510";
 
 const state = {
   documents: [],
@@ -485,14 +485,6 @@ async function retryDocument(documentId) {
 async function loadMessages() {
   state.messages = await api("/api/messages");
   renderMessages();
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 function formatFileSize(size) {

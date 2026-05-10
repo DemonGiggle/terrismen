@@ -1,4 +1,4 @@
-import { api } from "./shared.js";
+import { api, escapeHtml } from "./shared.js?v=asset-ui-fixes-20260510";
 
 const PAGE_SIZE = 10;
 const documentId = Number(window.location.pathname.match(/\/documents\/(\d+)\/notes/)?.[1]);
@@ -19,15 +19,6 @@ const elements = {
   next: document.querySelector("#notes-next"),
   pageLabel: document.querySelector("#notes-page-label"),
 };
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function renderEmpty(payload) {
   elements.list.innerHTML = `

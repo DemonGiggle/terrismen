@@ -86,6 +86,11 @@ def settings_page() -> FileResponse:
     return FileResponse(Path(__file__).parent / "web" / "static" / "settings.html")
 
 
+@app.get("/documents/{document_id}/notes")
+def notes_page(document_id: int) -> FileResponse:
+    return FileResponse(Path(__file__).parent / "web" / "static" / "notes.html")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -181,6 +186,82 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
         item["references"] = mystery_refs.get(int(item["id"]), [])
         payload["mysteries"].append(item)
     return payload
+
+
+@app.get("/api/documents/{document_id}/notes")
+def list_document_notes(
+    document_id: int,
+    note_type: str = "normal",
+    page: int = 1,
+    page_size: int = 10,
+    connection=Depends(get_connection),
+) -> dict[str, object]:
+    document = connection.execute(
+        "SELECT id, original_name, status FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if note_type not in {"normal", "mystery"}:
+        raise HTTPException(status_code=400, detail="note_type must be normal or mystery")
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 50)
+    offset = (page - 1) * page_size
+
+    if note_type == "mystery":
+        total = connection.execute(
+            "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",
+            (document_id,),
+        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            SELECT unresolved_mysteries.id, unresolved_mysteries.question, unresolved_mysteries.reason,
+                   unresolved_mysteries.keywords, unresolved_mysteries.status, unresolved_mysteries.resolution_summary,
+                   unresolved_mysteries.created_at, sources.locator, sources.page_number
+            FROM unresolved_mysteries
+            JOIN sources ON sources.id = unresolved_mysteries.source_id
+            WHERE unresolved_mysteries.document_id = ?
+            ORDER BY unresolved_mysteries.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (document_id, page_size, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = row_to_dict(row) or {}
+            item["reference_label"] = build_reference_label(document["original_name"], item["locator"], item["page_number"])
+            items.append(item)
+    else:
+        total = connection.execute(
+            "SELECT COUNT(*) FROM notes WHERE document_id = ?",
+            (document_id,),
+        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            SELECT notes.id, notes.note, notes.keywords, notes.created_at, sources.locator, sources.page_number
+            FROM notes
+            JOIN sources ON sources.id = notes.source_id
+            WHERE notes.document_id = ?
+            ORDER BY notes.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (document_id, page_size, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = row_to_dict(row) or {}
+            item["reference_label"] = build_reference_label(document["original_name"], item["locator"], item["page_number"])
+            items.append(item)
+
+    return {
+        "document": row_to_dict(document),
+        "note_type": note_type,
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size if total else 0,
+    }
 
 
 @app.delete("/api/documents/{document_id}")

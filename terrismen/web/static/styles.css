@@ -610,3 +610,54 @@ input[disabled] {
     text-align: left;
   }
 }
+
+.notes-shell {
+  max-width: 980px;
+}
+
+.notes-viewer {
+  gap: 18px;
+}
+
+.notes-controls label {
+  color: #cbd5e1;
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.notes-list {
+  display: grid;
+  gap: 14px;
+}
+
+.note-card {
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 18px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.note-card p {
+  margin: 0;
+  color: #dbeafe;
+  line-height: 1.65;
+}
+
+.note-card h3 {
+  margin: 0;
+  color: #f8fafc;
+}
+
+.mystery-card {
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.pager {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}

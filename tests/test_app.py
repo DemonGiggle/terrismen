@@ -76,3 +76,62 @@ def test_chat_returns_request_progress_payload(tmp_path, monkeypatch) -> None:
     assert payload["status"] == "processing"
     assert payload["progress_step_count"] == 6
     assert payload["selected_document_ids"] == []
+
+
+def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+
+    response = client.get("/documents/123/notes")
+
+    assert response.status_code == 200
+    assert "Document Notes" in response.text
+    assert "note-type-filter" in response.text
+
+
+def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.pdf", "/tmp/notes.pdf", "application/pdf", "pdf", "ready", "", app_module.config.database_path.as_posix()),
+    ).lastrowid
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, "Page 1", 1, "content", "", "{}", app_module.config.database_path.as_posix()),
+    ).lastrowid
+    for index in range(3):
+        note_id = connection.execute(
+            "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+            (document_id, source_id, f"note {index}", "note", app_module.config.database_path.as_posix()),
+        ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (document_id, source_id, note_id, question, reason, keywords, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, source_id, note_id, "mystery?", "unclear", "mystery", "open", app_module.config.database_path.as_posix()),
+    )
+    connection.commit()
+    connection.close()
+
+    response = client.get(f"/api/documents/{document_id}/notes?note_type=normal&page=2&page_size=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["page"] == 2
+    assert payload["total_pages"] == 2
+    assert len(payload["items"]) == 1
+
+    mystery_response = client.get(f"/api/documents/{document_id}/notes?note_type=mystery&page_size=2")
+    assert mystery_response.status_code == 200
+    mystery_payload = mystery_response.json()
+    assert mystery_payload["total"] == 1
+    assert mystery_payload["items"][0]["question"] == "mystery?"

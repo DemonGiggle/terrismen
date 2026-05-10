@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terrismen Notes</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app-shell notes-shell">
+    <header class="topbar">
+      <div>
+        <a class="eyebrow" href="/">← Workspace</a>
+        <h1 id="notes-title">Document Notes</h1>
+        <p class="subtitle" id="notes-subtitle">Browse generated notes without crowding the chat workspace.</p>
+      </div>
+      <div class="topbar-actions">
+        <a class="button-link secondary" href="/settings">Settings</a>
+      </div>
+    </header>
+
+    <section class="panel notes-viewer" aria-labelledby="notes-title">
+      <div class="split-header notes-controls">
+        <label>
+          Note type
+          <select id="note-type-filter">
+            <option value="normal">Normal notes</option>
+            <option value="mystery">Mysterious notes</option>
+          </select>
+        </label>
+        <span id="notes-count" class="tag">Loading…</span>
+      </div>
+
+      <div id="notes-list" class="notes-list" aria-live="polite"></div>
+
+      <nav class="pager" aria-label="Notes pagination">
+        <button id="notes-prev" class="secondary" type="button">Previous</button>
+        <span id="notes-page-label" class="meta">Page 1</span>
+        <button id="notes-next" class="secondary" type="button">Next</button>
+      </nav>
+    </section>
+  </main>
+  <script type="module" src="/static/notes.js"></script>
+</body>
+</html>

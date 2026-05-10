@@ -21,6 +21,7 @@ class ProviderSettings:
     model: str
     api_key: str
     temperature: float
+    llm_timeout_seconds: float
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.model and self.provider_type)

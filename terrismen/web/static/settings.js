@@ -24,6 +24,7 @@ function populateSettingsForm(settings) {
   elements.settingsForm.model.value = settings.model || "";
   elements.settingsForm.api_key.value = settings.api_key || "";
   elements.settingsForm.temperature.value = settings.temperature ?? 0.2;
+  elements.settingsForm.llm_timeout_seconds.value = settings.llm_timeout_seconds ?? 600;
 }
 
 async function loadSettings() {
@@ -45,6 +46,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
         model: formData.get("model"),
         api_key: formData.get("api_key"),
         temperature: Number(formData.get("temperature")),
+        llm_timeout_seconds: Number(formData.get("llm_timeout_seconds")),
       }),
     });
     populateSettingsForm(savedSettings);

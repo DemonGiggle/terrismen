@@ -14,6 +14,7 @@ from terrismen.config import AppConfig, load_config
 from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
+from terrismen.services.documents import delete_document
 from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion
 from terrismen.services.notes import build_reference_label
 from terrismen.services.parsers import ParserError
@@ -180,6 +181,13 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
         item["references"] = mystery_refs.get(int(item["id"]), [])
         payload["mysteries"].append(item)
     return payload
+
+
+@app.delete("/api/documents/{document_id}")
+def remove_document(document_id: int, connection=Depends(get_connection)) -> dict[str, bool]:
+    if not delete_document(connection, document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"deleted": True}
 
 
 @app.get("/api/messages")

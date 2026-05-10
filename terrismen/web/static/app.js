@@ -23,8 +23,6 @@ const elements = {
   uploadSubmit: document.querySelector("#upload-submit"),
   uploadFeedback: document.querySelector("#upload-feedback"),
   documents: document.querySelector("#documents"),
-  detail: document.querySelector("#document-detail"),
-  documentMeta: document.querySelector("#document-meta"),
   chatForm: document.querySelector("#chat-form"),
   chatInput: document.querySelector("#chat-input"),
   chatSubmit: document.querySelector("#chat-submit"),
@@ -61,7 +59,7 @@ function renderDocuments() {
     elements.documents.className = "document-list empty document-empty-state";
     elements.documents.innerHTML = `
       <strong>No documents yet</strong>
-      <p class="meta">Use the upload action above to add your first file and start generating notes.</p>
+      <p class="meta">Use Add doc to upload your first source for chat.</p>
     `;
     return;
   }
@@ -72,7 +70,7 @@ function renderDocuments() {
       const active = documentItem.id === state.selectedDocumentId ? " active" : "";
       const progress = describeDocumentProgress(documentItem);
       return `
-        <button class="document-card${active}" data-document-id="${documentItem.id}">
+        <article class="document-card${active}" data-document-id="${documentItem.id}">
           <div class="split-header">
             <strong>${escapeHtml(documentItem.original_name)}</strong>
             <span class="tag">${escapeHtml(describeDocumentState(documentItem.status))}</span>
@@ -80,7 +78,7 @@ function renderDocuments() {
           ${progress ? `<div class="meta">${escapeHtml(progress)}</div>` : ""}
           <div class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</div>
           ${documentItem.error ? `<div class="meta">${escapeHtml(documentItem.error)}</div>` : ""}
-        </button>
+        </article>
       `;
     })
     .join("");
@@ -106,131 +104,6 @@ function summarizeSourceNote(note) {
   }
 
   return preview.length > 160 ? `${preview.slice(0, 157)}...` : preview;
-}
-
-function renderMysteries(mysteries) {
-  if (!mysteries?.length) {
-    return "";
-  }
-  return `
-    <section class="detail-section">
-      <div class="split-header">
-        <h3>Unresolved mysteries</h3>
-        <span class="meta">${mysteries.length} tracked</span>
-      </div>
-      ${mysteries
-        .map(
-          (mystery) => `
-            <article class="mystery-card ${escapeHtml(mystery.status)}">
-              <div class="split-header">
-                <strong>${escapeHtml(mystery.question)}</strong>
-                <span class="tag">${escapeHtml(mystery.status)}</span>
-              </div>
-              <div class="meta">Origin ${escapeHtml(mystery.origin_reference_label)}</div>
-              ${mystery.keywords ? `<div class="meta">${escapeHtml(mystery.keywords)}</div>` : ""}
-              <h3>Why it was uncertain</h3>
-              <pre>${escapeHtml(mystery.reason || "No reason recorded")}</pre>
-              ${
-                mystery.resolution_summary
-                  ? `<h3>${mystery.status === "resolved" ? "Resolution" : "Current review"}</h3><pre>${escapeHtml(mystery.resolution_summary)}</pre>`
-                  : ""
-              }
-              ${renderReferenceTags(mystery.references)}
-            </article>
-          `,
-        )
-        .join("")}
-    </section>
-  `;
-}
-
-function renderSources(sources) {
-  if (!sources?.length) {
-    return "";
-  }
-  return `
-    <section class="detail-section">
-      <div class="split-header">
-        <h3>Source notes</h3>
-        <span class="meta">${sources.length} extracted units</span>
-      </div>
-      ${sources
-        .map(
-          (source) => `
-            <details class="source-card source-card-collapsible">
-              <summary class="source-summary">
-                <div class="source-summary-copy">
-                  <div class="split-header">
-                    <strong>${escapeHtml(source.locator)}</strong>
-                    ${source.page_number ? `<span class="tag">Ref ${source.page_number}</span>` : ""}
-                  </div>
-                  <div class="source-preview">${escapeHtml(summarizeSourceNote(source.note))}</div>
-                  <div class="meta">${escapeHtml(source.keywords || "No keywords extracted")}</div>
-                </div>
-                <span class="tag source-toggle-label">
-                  <span class="source-toggle-closed">Open note</span>
-                  <span class="source-toggle-open">Close note</span>
-                </span>
-              </summary>
-              <div class="source-expanded">
-                <h3>Full note</h3>
-                <pre>${escapeHtml(source.note || "No note generated")}</pre>
-                <h3>Source excerpt</h3>
-                <pre>${escapeHtml(source.content || "[no text extracted]")}</pre>
-                ${
-                  source.image_summary
-                    ? `<h3>Image summary</h3><pre>${escapeHtml(source.image_summary)}</pre>`
-                    : ""
-                }
-              </div>
-            </details>
-          `,
-        )
-        .join("")}
-    </section>
-  `;
-}
-
-function renderDocumentDetail(documentItem) {
-  if (!documentItem) {
-    elements.documentMeta.textContent = "";
-    elements.detail.className = "detail empty";
-    elements.detail.textContent = "Select a document to inspect its notes and source references.";
-    return;
-  }
-
-  const sources = documentItem.sources || [];
-  const mysteries = documentItem.mysteries || [];
-  const progress = describeDocumentProgress(documentItem);
-  elements.documentMeta.textContent = [
-    documentItem.kind || "unknown",
-    describeDocumentState(documentItem.status),
-    progress || null,
-    `${sources.length} sources`,
-    `${mysteries.length} mysteries`,
-  ]
-    .filter(Boolean)
-    .join(" • ");
-  if (!sources.length && !mysteries.length) {
-    elements.detail.className = "detail empty";
-    if (documentItem.status === "processing") {
-      elements.detail.textContent = progress || "This document is still processing.";
-      return;
-    }
-    if (documentItem.status === "failed") {
-      elements.detail.textContent = [progress || "This document failed to process.", documentItem.error || null]
-        .filter(Boolean)
-        .join(" ");
-      return;
-    }
-    elements.detail.textContent = "This document does not have extracted notes or mysteries yet.";
-    return;
-  }
-
-  elements.detail.className = "detail";
-  elements.detail.innerHTML = [renderMysteries(mysteries), renderSources(sources)]
-    .filter(Boolean)
-    .join("");
 }
 
 function renderMessages() {
@@ -499,21 +372,24 @@ async function loadSettingsSummary() {
 
 async function loadDocuments() {
   state.documents = await api("/api/documents");
+  syncSelectedDocument();
   renderDocuments();
   syncDocumentPolling();
-  const targetDocumentId = state.selectedDocumentId ?? state.documents[0]?.id ?? null;
-  if (targetDocumentId !== null) {
-    await openDocument(targetDocumentId);
-  } else {
-    renderDocumentDetail(null);
+}
+
+function syncSelectedDocument() {
+  if (!state.documents.length) {
+    state.selectedDocumentId = null;
+    return;
+  }
+  if (!state.documents.some((documentItem) => documentItem.id === state.selectedDocumentId)) {
+    state.selectedDocumentId = state.documents[0].id;
   }
 }
 
-async function openDocument(documentId) {
+function selectDocument(documentId) {
   state.selectedDocumentId = Number(documentId);
   renderDocuments();
-  const documentItem = await api(`/api/documents/${documentId}`);
-  renderDocumentDetail(documentItem);
 }
 
 async function loadMessages() {
@@ -676,7 +552,6 @@ elements.uploadForm.addEventListener("submit", async (event) => {
     elements.uploadForm.reset();
     renderUploadSelection();
     await loadDocuments();
-    await openDocument(documentItem.id);
     setUploadFeedback(`Processing started for ${documentItem.original_name}. We will keep the current step visible while ingestion runs.`);
     setStatus(`Started ${documentItem.original_name}`);
   } catch (error) {
@@ -691,7 +566,7 @@ elements.documents.addEventListener("click", async (event) => {
   if (!target) {
     return;
   }
-  await openDocument(target.dataset.documentId);
+  selectDocument(target.dataset.documentId);
 });
 
 elements.chatForm.addEventListener("submit", async (event) => {

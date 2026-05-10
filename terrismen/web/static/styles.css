@@ -289,13 +289,6 @@ input[disabled] {
   gap: 12px;
 }
 
-.document-empty-state {
-  border: 1px dashed rgba(148, 163, 184, 0.2);
-  border-radius: 16px;
-  padding: 18px;
-  background: rgba(15, 23, 42, 0.35);
-}
-
 .document-card,
 .source-card,
 .mystery-card,
@@ -583,7 +576,7 @@ input[disabled] {
   color: #94a3b8;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 720px) {
   .topbar {
     align-items: flex-start;
     flex-direction: column;

@@ -86,7 +86,7 @@ Settings terminology note:
 
 - `document_note_batch_size` refers to **source units** across all formats
 - `mystery_resolution_batch_size` batches unresolved mysteries later in the pipeline
-- the current runtime still generates one normal note per source unit; batched document-note generation is a separate rollout
+- the runtime now batches source units for normal-note generation before the later mystery-resolution pass
 
 ### 3. Source persistence
 
@@ -107,28 +107,30 @@ If a source has embedded images, they are written to disk under `data/images/`, 
 
 ## Note-generation technique
 
-After parsing, each source unit is turned into a dense retrieval note.
+After parsing, `terrismen` groups source units into stable note-generation batches. Every source unit in a batch finishes image enrichment first, then the batch is sent to the model for one-or-more dense retrieval notes.
 
 ### Prompt inputs
 
-`generate_note(...)` sends the model:
+`generate_batch_notes(...)` sends the model:
 
-- the document reference label
-- the source locator
-- the source text
-- the image descriptions for that source
+- one or more `source_id` values for the batch
+- a reference label and locator for each source unit
+- the source text for each source unit
+- the image descriptions already persisted for each source unit in the batch
 
 ### Prompt outputs
 
-The note-generation prompt asks for JSON with:
+The batch note-generation prompt asks for JSON with:
 
-- `note`: dense retrieval-oriented summary text
-- `keywords`: search terms worth indexing
-- `mysteries`: unresolved questions or ambiguities from that source
+- `notes`: one or more retrieval-oriented note payloads
+- each note payload includes ordered `source_ids`
+- each note payload includes `note`, `keywords`, and optional `mysteries`
+- each mystery names a single origin `source_id` inside that note payload
 
 The result is stored as:
 
 - one row in `notes`
+- one-or-more rows in `note_sources` linking that note to its covered source units
 - optional rows in `unresolved_mysteries`
 
 The stored `notes.note` is intentionally denser than a casual summary. It is written for later retrieval, not only for display.

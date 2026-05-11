@@ -11,11 +11,20 @@ from terrismen.services.ingestion import (
     _resolve_document_mysteries,
     continue_document_ingestion,
     create_document_ingestion,
+    load_document_note_batch_size,
     load_mystery_resolution_batch_size,
     load_mystery_resolution_reference_mode,
     retry_document_ingestion,
 )
-from terrismen.services.notes import GeneratedNote, MysteryBatchResolution, MysteryDraft, MysteryResolution
+from terrismen.services.notes import (
+    BatchGeneratedNote,
+    BatchMysteryDraft,
+    GeneratedNote,
+    MysteryBatchResolution,
+    MysteryDraft,
+    MysteryResolution,
+    ParsedBatchNotes,
+)
 from terrismen.services.parsers import ParsedSource, ParserError
 
 
@@ -74,6 +83,27 @@ def test_load_mystery_resolution_batch_size_uses_default_valid_and_invalid_value
     connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (99,))
     connection.commit()
     assert load_mystery_resolution_batch_size(connection) == 5
+    connection.close()
+
+
+def test_load_document_note_batch_size_uses_default_valid_and_invalid_values(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    assert load_document_note_batch_size(connection) == 5
+
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (9,))
+    connection.commit()
+    assert load_document_note_batch_size(connection) == 9
+
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (0,))
+    connection.commit()
+    assert load_document_note_batch_size(connection) == 5
+
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (99,))
+    connection.commit()
+    assert load_document_note_batch_size(connection) == 5
     connection.close()
 
 
@@ -331,10 +361,10 @@ def test_continue_document_ingestion_batches_mysteries_by_setting_and_handles_fi
     connection.execute(
         """
         UPDATE settings
-        SET mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
+        SET document_note_batch_size = ?, mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
         WHERE id = 1
         """,
-        (2, "notes_only"),
+        (3, 2, "notes_only"),
     )
     document_id = create_document_ingestion(
         connection,
@@ -389,26 +419,6 @@ def test_continue_document_ingestion_batches_mysteries_by_setting_and_handles_fi
             )
 
     provider = BatchProvider()
-    generated_notes = iter(
-        [
-            GeneratedNote(
-                note_text="Alpha note\nKeywords: alpha",
-                keywords="alpha",
-                mysteries=[MysteryDraft(question="alpha mystery?", reason="alpha gap", keywords="alpha")],
-            ),
-            GeneratedNote(
-                note_text="Beta note\nKeywords: beta",
-                keywords="beta",
-                mysteries=[MysteryDraft(question="beta mystery?", reason="beta gap", keywords="beta")],
-            ),
-            GeneratedNote(
-                note_text="Gamma note\nKeywords: gamma",
-                keywords="gamma",
-                mysteries=[MysteryDraft(question="gamma mystery?", reason="gamma gap", keywords="gamma")],
-            ),
-        ]
-    )
-
     monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: provider)
     monkeypatch.setattr(
         "terrismen.services.ingestion.parse_document",
@@ -422,8 +432,26 @@ def test_continue_document_ingestion_batches_mysteries_by_setting_and_handles_fi
         ),
     )
     monkeypatch.setattr(
-        "terrismen.services.ingestion.generate_note",
-        lambda provider, document_name, source, image_descriptions: next(generated_notes),
+        "terrismen.services.ingestion.generate_batch_notes",
+        lambda provider, sources: ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id],
+                    note_text=f"{source.locator} note\nKeywords: {source.content.split()[0]}",
+                    keywords=source.content.split()[0],
+                    mysteries=[
+                        BatchMysteryDraft(
+                            source_id=source.source_id,
+                            question=f"{source.content.split()[0]} mystery?",
+                            reason=f"{source.content.split()[0]} gap",
+                            keywords=source.content.split()[0],
+                        )
+                    ],
+                )
+                for source in sources
+            ],
+            missing_source_ids=[],
+        ),
     )
 
     def search_candidates(connection, document_id, search_text, limit=8):
@@ -617,11 +645,17 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
 
     monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
     monkeypatch.setattr(
-        "terrismen.services.ingestion.generate_note",
-        lambda provider, document_name, source, image_descriptions: GeneratedNote(
-            note_text="Summary line\nKeywords: alpha, beta",
-            keywords="alpha, beta",
-            mysteries=[],
+        "terrismen.services.ingestion.generate_batch_notes",
+        lambda provider, sources: ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id for source in sources],
+                    note_text="Summary line\nKeywords: alpha, beta",
+                    keywords="alpha, beta",
+                    mysteries=[],
+                )
+            ],
+            missing_source_ids=[],
         ),
     )
     continue_document_ingestion(config, document_id)
@@ -645,6 +679,218 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
     assert row["progress_step_count"] == 7
     assert row["note_count"] == 1
     check_connection.close()
+
+
+def test_continue_document_ingestion_batches_note_generation_and_uses_image_descriptions(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (2,))
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\ngamma\n",
+    )
+    connection.close()
+
+    class StubImage:
+        mime_type = "image/png"
+
+    note_batches: list[list[int]] = []
+    first_batch_images: list[list[str]] = []
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.parse_document",
+        lambda file_path, images_dir: (
+            "text",
+            [
+                ParsedSource(
+                    locator="Chunk 1",
+                    content="alpha content",
+                    page_number=1,
+                    images=[(images_dir / "chunk1.png", StubImage())],
+                ),
+                ParsedSource(locator="Chunk 2", content="beta content", page_number=2),
+                ParsedSource(locator="Chunk 3", content="gamma content", page_number=3),
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.describe_images",
+        lambda provider, source: [f"{source.locator} image summary"] if source.images else [],
+    )
+
+    def fake_generate_batch_notes(provider, sources):
+        note_batches.append([source.source_id for source in sources])
+        if len(note_batches) == 1:
+            first_batch_images.extend([list(source.image_descriptions) for source in sources])
+        return ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id],
+                    note_text=f"{source.locator} note",
+                    keywords=source.locator.lower(),
+                    mysteries=[],
+                )
+                for source in sources
+            ],
+            missing_source_ids=[],
+        )
+
+    monkeypatch.setattr("terrismen.services.ingestion.generate_batch_notes", fake_generate_batch_notes)
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    source_rows = check_connection.execute(
+        "SELECT locator, image_summary FROM sources WHERE document_id = ? ORDER BY id",
+        (document_id,),
+    ).fetchall()
+
+    assert note_batches == [[1, 2], [3]]
+    assert first_batch_images[0] == ["Chunk 1 image summary"]
+    assert first_batch_images[1] == []
+    assert [dict(row) for row in source_rows] == [
+        {"locator": "Chunk 1", "image_summary": "Chunk 1 image summary"},
+        {"locator": "Chunk 2", "image_summary": ""},
+        {"locator": "Chunk 3", "image_summary": ""},
+    ]
+    check_connection.close()
+
+
+def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_skips_completed_sources(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (2,))
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\ngamma\n",
+    )
+    connection.close()
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.parse_document",
+        lambda file_path, images_dir: (
+            "text",
+            [
+                ParsedSource(locator="Chunk 1", content="alpha content", page_number=1),
+                ParsedSource(locator="Chunk 2", content="beta content", page_number=2),
+                ParsedSource(locator="Chunk 3", content="gamma content", page_number=3),
+            ],
+        ),
+    )
+
+    batch_calls: list[list[int]] = []
+
+    def fake_generate_batch_notes(provider, sources):
+        batch_calls.append([source.source_id for source in sources])
+        if len(batch_calls) == 1:
+            return ParsedBatchNotes(
+                notes=[
+                    BatchGeneratedNote(
+                        source_ids=[sources[0].source_id],
+                        note_text="Alpha note",
+                        keywords="alpha",
+                        mysteries=[],
+                    )
+                ],
+                missing_source_ids=[sources[1].source_id],
+            )
+        return ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id for source in sources],
+                    note_text="Recovered note",
+                    keywords="recovered",
+                    mysteries=[],
+                )
+            ],
+            missing_source_ids=[],
+        )
+
+    monkeypatch.setattr("terrismen.services.ingestion.generate_batch_notes", fake_generate_batch_notes)
+
+    continue_document_ingestion(config, document_id)
+
+    failed_connection = connect(config.database_path)
+    failed_row = failed_connection.execute(
+        "SELECT status, error, progress_step_name FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    source_note_counts = failed_connection.execute(
+        """
+        SELECT sources.locator, COUNT(note_sources.note_id) AS note_count
+        FROM sources
+        LEFT JOIN note_sources ON note_sources.source_id = sources.id
+        WHERE sources.document_id = ?
+        GROUP BY sources.id
+        ORDER BY sources.id
+        """,
+        (document_id,),
+    ).fetchall()
+    failed_connection.close()
+
+    assert failed_row["status"] == "failed"
+    assert failed_row["progress_step_name"] == "generating notes"
+    assert "Chunk 2" in failed_row["error"]
+    assert [dict(row) for row in source_note_counts] == [
+        {"locator": "Chunk 1", "note_count": 1},
+        {"locator": "Chunk 2", "note_count": 0},
+    ]
+
+    retry_connection = connect(config.database_path)
+    payload = retry_document_ingestion(retry_connection, document_id)
+    retry_connection.close()
+
+    assert payload["status"] == "processing"
+
+    continue_document_ingestion(config, document_id)
+
+    recovered_connection = connect(config.database_path)
+    document_row = recovered_connection.execute(
+        """
+        SELECT status, progress_step_name,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    source_note_counts = recovered_connection.execute(
+        """
+        SELECT sources.locator, COUNT(note_sources.note_id) AS note_count
+        FROM sources
+        LEFT JOIN note_sources ON note_sources.source_id = sources.id
+        WHERE sources.document_id = ?
+        GROUP BY sources.id
+        ORDER BY sources.id
+        """,
+        (document_id,),
+    ).fetchall()
+    recovered_connection.close()
+
+    assert batch_calls == [[1, 2], [2, 3]]
+    assert document_row["status"] == "ready"
+    assert document_row["progress_step_name"] == "finalizing document"
+    assert document_row["note_count"] == 2
+    assert [dict(row) for row in source_note_counts] == [
+        {"locator": "Chunk 1", "note_count": 1},
+        {"locator": "Chunk 2", "note_count": 1},
+        {"locator": "Chunk 3", "note_count": 1},
+    ]
 
 
 def test_continue_document_ingestion_persists_failed_step(tmp_path: Path, monkeypatch) -> None:

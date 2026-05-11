@@ -169,7 +169,7 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
     )
     connection.execute(
         "UPDATE documents SET status = 'failed', progress_step_name = ?, progress_detail = ?, progress_step_index = ?, error = ? WHERE id = ?",
-        ("generating notes", "Processing 1/3 pages", 5, "provider failed", document_id),
+        ("parsing document", "", 3, "provider failed", document_id),
     )
     source_id = connection.execute(
         """
@@ -214,6 +214,59 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
     assert row["source_count"] == 0
     assert row["note_count"] == 0
     assert row["mystery_count"] == 0
+    connection.close()
+
+
+def test_retry_document_ingestion_reuses_completed_sources_for_note_stage(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'failed', progress_step_name = ?, progress_detail = ?, progress_step_index = ?, error = ? WHERE id = ?",
+        ("text", "generating notes", "Processing 1/3 sections", 5, "provider failed", document_id),
+    )
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 1", 1, "content", "{}"),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "note", "k"),
+    )
+    connection.commit()
+
+    payload = retry_document_ingestion(connection, document_id)
+
+    row = connection.execute(
+        """
+        SELECT status, error, kind, progress_step_name, progress_detail,
+               (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+
+    assert payload["status"] == "processing"
+    assert row["status"] == "processing"
+    assert row["error"] == ""
+    assert row["kind"] == "text"
+    assert row["progress_step_name"] == "generating notes"
+    assert row["progress_detail"] == ""
+    assert row["source_count"] == 1
+    assert row["note_count"] == 1
     connection.close()
 
 
@@ -293,13 +346,106 @@ def test_retry_document_ingestion_reuses_existing_outputs_for_mystery_stage(tmp_
     assert row["progress_detail"] == ""
     assert row["source_count"] == 1
     assert row["note_count"] == 1
-    assert mystery_row["status"] == "open"
-    assert mystery_row["resolution_summary"] == ""
-    assert mystery_row["resolution_note_id"] is None
-    assert mystery_row["resolution_source_id"] is None
-    assert mystery_row["resolved_at"] is None
-    assert ref_count == 0
+    assert mystery_row["status"] == "resolved"
+    assert mystery_row["resolution_summary"] == "resolved text"
+    assert mystery_row["resolution_note_id"] == note_id
+    assert mystery_row["resolution_source_id"] == source_id
+    assert mystery_row["resolved_at"] == "now"
+    assert ref_count == 1
     connection.close()
+
+
+def test_continue_document_ingestion_resumes_only_open_mysteries(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'processing', progress_step_name = ?, progress_detail = ?, progress_step_index = ? WHERE id = ?",
+        ("text", "resolving mysteries", "Processing 1/2 mysteries", 6, document_id),
+    )
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Page 1", 1, "content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "note", "k"),
+    ).lastrowid
+    resolved_mystery_id = connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (
+            document_id, source_id, note_id, question, reason, keywords, status,
+            resolution_summary, resolution_note_id, resolution_source_id, created_at, resolved_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'resolved', ?, ?, ?, 'now', 'now')
+        """,
+        (document_id, source_id, note_id, "resolved?", "", "", "resolved text", note_id, source_id),
+    ).lastrowid
+    open_mystery_id = connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (
+            document_id, source_id, note_id, question, reason, keywords, status,
+            resolution_summary, resolution_note_id, resolution_source_id, created_at, resolved_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'open', '', NULL, NULL, 'now', NULL)
+        """,
+        (document_id, source_id, note_id, "open?", "", ""),
+    ).lastrowid
+    connection.commit()
+    connection.close()
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    seen_questions: list[str] = []
+
+    def fake_resolve_mystery(provider, document_name, mystery, candidates):
+        seen_questions.append(str(mystery["question"]))
+        return MysteryResolution(status="resolved", summary="Now resolved", note_ids=[note_id], source_ids=[source_id])
+
+    monkeypatch.setattr("terrismen.services.ingestion.resolve_mystery", fake_resolve_mystery)
+    monkeypatch.setattr(
+        "terrismen.services.ingestion._search_mystery_candidates",
+        lambda connection, document_id, search_text, limit=8: [
+            {
+                "note_id": note_id,
+                "source_id": source_id,
+                "note": "note",
+                "keywords": "k",
+                "content": "content",
+                "locator": "Page 1",
+                "page_number": 1,
+            }
+        ],
+    )
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    resolved_row = check_connection.execute(
+        "SELECT status, resolution_summary FROM unresolved_mysteries WHERE id = ?",
+        (resolved_mystery_id,),
+    ).fetchone()
+    open_row = check_connection.execute(
+        "SELECT status, resolution_summary FROM unresolved_mysteries WHERE id = ?",
+        (open_mystery_id,),
+    ).fetchone()
+
+    assert seen_questions == ["open?"]
+    assert resolved_row["status"] == "resolved"
+    assert resolved_row["resolution_summary"] == "resolved text"
+    assert open_row["status"] == "resolved"
+    assert open_row["resolution_summary"] == "Now resolved"
+    check_connection.close()
 
 
 def test_retry_document_ingestion_rejects_non_failed_documents(tmp_path: Path) -> None:

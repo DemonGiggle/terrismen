@@ -193,6 +193,10 @@ def _resolve_document_mysteries(
     document_id: int,
     document_name: str,
 ) -> None:
+    total_mysteries = connection.execute(
+        "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()[0]
     mysteries = connection.execute(
         """
         SELECT unresolved_mysteries.id, unresolved_mysteries.question, unresolved_mysteries.reason, unresolved_mysteries.keywords,
@@ -200,15 +204,26 @@ def _resolve_document_mysteries(
                sources.page_number AS origin_page_number
         FROM unresolved_mysteries
         JOIN sources ON sources.id = unresolved_mysteries.source_id
-        WHERE unresolved_mysteries.document_id = ?
+        WHERE unresolved_mysteries.document_id = ? AND unresolved_mysteries.status = 'open'
         ORDER BY unresolved_mysteries.id
         """,
         (document_id,),
     ).fetchall()
 
-    total_mysteries = len(mysteries)
+    open_mysteries = len(mysteries)
     if total_mysteries == 0:
         update_document_progress(connection, document_id, "resolving mysteries", "Processing 0/0 mysteries")
+        connection.commit()
+        return
+
+    resolved_count = total_mysteries - open_mysteries
+    if open_mysteries == 0:
+        update_document_progress(
+            connection,
+            document_id,
+            "resolving mysteries",
+            _format_progress_detail(total_mysteries, total_mysteries, "mysteries"),
+        )
         connection.commit()
         return
 
@@ -217,7 +232,7 @@ def _resolve_document_mysteries(
             connection,
             document_id,
             "resolving mysteries",
-            _format_progress_detail(mystery_index, total_mysteries, "mysteries"),
+            _format_progress_detail(resolved_count + mystery_index, total_mysteries, "mysteries"),
         )
         connection.commit()
         mystery = dict(mystery_row)
@@ -347,8 +362,7 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
     resume_step = row["progress_step_name"] or "parsing document"
     if resume_step in {"resolving mysteries", "finalizing document"}:
         resume_step = "resolving mysteries"
-        _reset_document_mystery_resolution_state(connection, document_id)
-    else:
+    elif resume_step == "parsing document":
         resume_step = "parsing document"
         _delete_document_outputs(connection, document_id)
         connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
@@ -376,6 +390,25 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
     return dict(document)
 
 
+def _load_existing_source_rows(connection: sqlite3.Connection, document_id: int) -> dict[tuple[str, int | None], dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT sources.id, sources.locator, sources.page_number, sources.image_summary,
+               COUNT(notes.id) AS note_count
+        FROM sources
+        LEFT JOIN notes ON notes.source_id = sources.id
+        WHERE sources.document_id = ?
+        GROUP BY sources.id
+        ORDER BY sources.id
+        """,
+        (document_id,),
+    ).fetchall()
+    return {
+        (str(row["locator"]), row["page_number"] if isinstance(row["page_number"], int) else None): dict(row)
+        for row in rows
+    }
+
+
 def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConfig, *, document_id: int) -> None:
     try:
         document_row = connection.execute(
@@ -400,30 +433,57 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
             connection.execute("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
             total_sources = len(parsed_sources)
             progress_noun = _source_progress_noun(kind)
+            existing_sources = _load_existing_source_rows(connection, document_id)
+            completed_sources = sum(1 for row in existing_sources.values() if int(row["note_count"]) > 0)
             update_document_progress(
                 connection,
                 document_id,
                 "generating notes",
-                _format_progress_detail(0, total_sources, progress_noun),
+                _format_progress_detail(completed_sources, total_sources, progress_noun),
             )
             connection.commit()
 
             for source_index, source in enumerate(parsed_sources, start=1):
-                source_cursor = connection.execute(
-                    """
-                    INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
-                    VALUES (?, ?, ?, ?, '', ?, ?)
-                    """,
-                    (
-                        document_id,
-                        source.locator,
-                        source.page_number,
-                        source.content,
-                        json.dumps(source.metadata),
-                        utcnow(),
-                    ),
-                )
-                source_id = int(source_cursor.lastrowid)
+                source_key = (source.locator, source.page_number)
+                existing_source = existing_sources.get(source_key)
+                if existing_source is not None and int(existing_source["note_count"]) > 0:
+                    continue
+
+                if existing_source is not None:
+                    source_id = int(existing_source["id"])
+                    connection.execute("DELETE FROM source_images WHERE source_id = ?", (source_id,))
+                    connection.execute(
+                        """
+                        UPDATE sources
+                        SET locator = ?, page_number = ?, content = ?, image_summary = '', metadata_json = ?, created_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            source.locator,
+                            source.page_number,
+                            source.content,
+                            json.dumps(source.metadata),
+                            utcnow(),
+                            source_id,
+                        ),
+                    )
+                else:
+                    source_cursor = connection.execute(
+                        """
+                        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+                        VALUES (?, ?, ?, ?, '', ?, ?)
+                        """,
+                        (
+                            document_id,
+                            source.locator,
+                            source.page_number,
+                            source.content,
+                            json.dumps(source.metadata),
+                            utcnow(),
+                        ),
+                    )
+                    source_id = int(source_cursor.lastrowid)
+                    existing_sources[source_key] = {"id": source_id, "note_count": 0}
                 if source.images:
                     update_document_progress(
                         connection,
@@ -472,6 +532,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                         note_id=note_id,
                         draft=mystery,
                     )
+                existing_sources[source_key] = {"id": source_id, "note_count": 1}
                 connection.commit()
 
             mystery_count = connection.execute(

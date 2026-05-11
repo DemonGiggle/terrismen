@@ -82,6 +82,12 @@ Each `ParsedSource` carries:
 - `metadata`: parser-specific context such as kind or sheet name
 - `images`: any extracted images associated with that source unit
 
+Settings terminology note:
+
+- `document_note_batch_size` refers to **source units** across all formats
+- `mystery_resolution_batch_size` batches unresolved mysteries later in the pipeline
+- the current runtime still generates one normal note per source unit; batched document-note generation is a separate rollout
+
 ### 3. Source persistence
 
 For each parsed source, `terrismen` inserts:

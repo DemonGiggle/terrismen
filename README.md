@@ -84,6 +84,22 @@ Tradeoffs:
 
 If one mystery in a batch comes back malformed, the other valid results in that same batch are still applied. When the batch response is unusable, the affected mysteries stay open with parser-fallback summaries instead of being marked resolved.
 
+## Document note batching setting
+
+The Settings page also stores `document_note_batch_size`, a separate batch-size control for the upcoming batched document-note pipeline.
+
+- default `5`, valid range `1-20`
+- the unit is always **source units**, not only PDF pages:
+  - PDF: pages
+  - DOCX, DOC, TXT, MD, TEXT: chunks
+  - XLSX, XLS: sheet row-group sections
+- the control is intentionally separate from `mystery_resolution_batch_size`
+
+Current behavior note:
+
+- the current ingestion pipeline still generates one normal note per source unit
+- `document_note_batch_size` is stored now so the later multi-source note rollout can use a stable setting contract without overloading mystery batching
+
 ## Provider examples
 
 ### OpenAI-compatible

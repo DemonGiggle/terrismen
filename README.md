@@ -30,7 +30,7 @@
    - DOCX, DOC, and plaintext become chunked source units
    - Excel files become sheet/row-range source units
 4. If images are found in supported formats, they are sent to the configured model and described.
-5. Each source unit plus any image descriptions is sent to the model to generate retrieval-friendly notes and unresolved mysteries when the page remains ambiguous.
+5. After every source unit in a stable batch finishes image enrichment, the batch is sent to the model to generate retrieval-friendly notes that can cover one or several source units plus unresolved mysteries for any still-ambiguous source.
 6. After the full document is read, `terrismen` revisits unresolved mysteries in stable batches, searches indexed notes, optionally includes source excerpts, and stores grounded per-mystery resolutions without forcing the whole batch to succeed or fail together.
 7. During chat, `terrismen` searches the stored notes and mystery resolutions, asks the model to pick the most relevant references, then answers from the original source excerpts and chat history.
 
@@ -86,7 +86,7 @@ If one mystery in a batch comes back malformed, the other valid results in that 
 
 ## Document note batching setting
 
-The Settings page also stores `document_note_batch_size`, a separate batch-size control for the upcoming batched document-note pipeline.
+The Settings page stores `document_note_batch_size`, a separate batch-size control for batched document-note generation.
 
 - default `5`, valid range `1-20`
 - the unit is always **source units**, not only PDF pages:
@@ -95,10 +95,11 @@ The Settings page also stores `document_note_batch_size`, a separate batch-size 
   - XLSX, XLS: sheet row-group sections
 - the control is intentionally separate from `mystery_resolution_batch_size`
 
-Current behavior note:
+Current behavior:
 
-- the current ingestion pipeline still generates one normal note per source unit
-- `document_note_batch_size` is stored now so the later multi-source note rollout can use a stable setting contract without overloading mystery batching
+- source units are processed in stable batches for note generation
+- every source unit in a batch finishes image enrichment before the batch note call runs
+- one generated note can reference several related source units
 
 ## Provider examples
 

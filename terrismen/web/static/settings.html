@@ -72,7 +72,7 @@
               Document note batch size
               <input name="document_note_batch_size" type="number" step="1" min="1" max="20" value="5">
             </label>
-            <p class="meta">Target source units per note-generation call for the batched note-generation rollout. Applies to PDF pages, text chunks, and spreadsheet row groups. Saved now, but current ingestion still generates one normal note per source unit until the batch-note pipeline lands.</p>
+            <p class="meta">Target source units per note-generation call. Applies to PDF pages, text chunks, and spreadsheet row groups. Smaller batches reduce prompt size and retry scope; larger batches create broader multi-source notes.</p>
             <label>
               Mystery batch size
               <input name="mystery_resolution_batch_size" type="number" step="1" min="1" max="20" value="5">

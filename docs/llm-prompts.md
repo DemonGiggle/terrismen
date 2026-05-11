@@ -1,6 +1,6 @@
 # LLM prompts and prompt workflow
 
-`terrismen` currently defines **6 prompt constants** that are sent to the LLM as the **system** message or are prepared for the next batch-note rollout.
+`terrismen` currently defines **6 prompt constants** that are sent to the LLM as the **system** message.
 
 ## Where prompts are sent
 
@@ -15,8 +15,8 @@ That means the prompt constants below are not just internal strings; each one be
 
 | Prompt | File | Used by | When it is sent |
 | --- | --- | --- | --- |
-| `NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_note(...)` | Once per parsed source unit during ingestion, after parsing and after optional image descriptions are prepared |
-| `BATCH_NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_batch_notes(...)` | Prepared for the future batched normal-note rollout; the current runtime does not call it yet |
+| `NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_note(...)` | Available for single-source note generation compatibility paths and tests |
+| `BATCH_NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_batch_notes(...)` | Once per note-generation batch during ingestion, after all source units in the batch have finished image enrichment |
 | `IMAGE_PROMPT` | `terrismen/services/notes.py` | `describe_images(...)` | Once per extracted image during ingestion, before note generation for that source unit |
 | `MYSTERY_RESOLUTION_BATCH_PROMPT` | `terrismen/services/notes.py` | `resolve_mysteries(...)` / `resolve_mystery(...)` | Once per mystery-resolution model call; the contract supports one or more mysteries per call |
 | `REFERENCE_PICKER_PROMPT` | `terrismen/services/chat.py` | `_pick_source_ids(...)` | Once per chat request, after candidate notes and mystery matches are retrieved |
@@ -48,14 +48,19 @@ ingest_document(...)
         |         |                       system: IMAGE_PROMPT
         |         |                       user: locator + nearby text + image bytes
         |         |
-        |         +--> generate_note(...)
-        |                   system: NOTE_SYSTEM_PROMPT
-        |                   user: reference + source text + image descriptions
+        |         +--> persist sources + image descriptions
+        |
+        +--> group source units into stable note batches
+        |         |
+        |         +--> generate_batch_notes(...)
+        |                   system: BATCH_NOTE_SYSTEM_PROMPT
+        |                   user: source_ids + references + source text + image descriptions
         |                   |
         |                   v
-        |              note + keywords + mystery drafts
+        |              one or more notes + source-specific mystery drafts
         |                   |
         |                   +--> store notes
+        |                   +--> store note_sources links
         |                   +--> store unresolved mysteries
         |
         +--> _resolve_document_mysteries(...)
@@ -75,8 +80,8 @@ ingest_document(...)
 
 Terminology note:
 
-- `document_note_batch_size` is the saved setting for the upcoming batched normal-note rollout and is defined in **source units** (PDF pages, text chunks, spreadsheet row-group sections)
-- the current runtime described below still sends one parsed source unit per `generate_note(...)` call
+- `document_note_batch_size` controls batched normal-note generation and is defined in **source units** (PDF pages, text chunks, spreadsheet row-group sections)
+- the runtime can group several parsed source units into one note when the batch-note contract returns combined coverage
 
 ### Chat flow
 

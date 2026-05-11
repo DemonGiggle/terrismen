@@ -13,11 +13,13 @@ from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
 from terrismen.llm.base import ProviderError
 from terrismen.services.notes import (
+    BatchNoteSourceInput,
     MysteryDraft,
     MysteryResolutionRequest,
+    build_reference_label,
     build_mystery_resolution_request,
     describe_images,
-    generate_note,
+    generate_batch_notes,
     resolve_mysteries,
     resolve_mystery,
 )
@@ -35,6 +37,8 @@ INGESTION_STEPS: Final[tuple[str, ...]] = (
 )
 DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE = 5
 MAX_MYSTERY_RESOLUTION_BATCH_SIZE = 20
+DEFAULT_DOCUMENT_NOTE_BATCH_SIZE = 5
+MAX_DOCUMENT_NOTE_BATCH_SIZE = 20
 DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE = "notes_only"
 MYSTERY_RESOLUTION_REFERENCE_MODES = {"notes_only", "notes_and_sources"}
 
@@ -45,6 +49,12 @@ class PreparedMysteryResolution:
     request: MysteryResolutionRequest
     candidate_note_map: dict[int, dict[str, object]]
     candidate_source_map: dict[int, dict[str, object]]
+
+
+@dataclass(slots=True)
+class PendingBatchSource:
+    source_id: int
+    source: ParsedSource
 
 
 def file_extension(name: str) -> str:
@@ -83,6 +93,29 @@ def normalize_mystery_resolution_batch_size(value: object) -> int:
     if size < 1 or size > MAX_MYSTERY_RESOLUTION_BATCH_SIZE:
         return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
     return size
+
+
+def normalize_document_note_batch_size(value: object) -> int:
+    if isinstance(value, bool):
+        return DEFAULT_DOCUMENT_NOTE_BATCH_SIZE
+    if isinstance(value, int):
+        size = value
+    elif isinstance(value, float) and value.is_integer():
+        size = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        size = int(value.strip())
+    else:
+        return DEFAULT_DOCUMENT_NOTE_BATCH_SIZE
+    if size < 1 or size > MAX_DOCUMENT_NOTE_BATCH_SIZE:
+        return DEFAULT_DOCUMENT_NOTE_BATCH_SIZE
+    return size
+
+
+def load_document_note_batch_size(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT document_note_batch_size FROM settings WHERE id = 1").fetchone()
+    if row is None:
+        return DEFAULT_DOCUMENT_NOTE_BATCH_SIZE
+    return normalize_document_note_batch_size(row["document_note_batch_size"])
 
 
 def load_mystery_resolution_batch_size(connection: sqlite3.Connection) -> int:
@@ -578,6 +611,100 @@ def _load_existing_source_rows(connection: sqlite3.Connection, document_id: int)
     }
 
 
+def _load_source_image_descriptions(
+    connection: sqlite3.Connection,
+    source_ids: list[int],
+) -> dict[int, list[str]]:
+    if not source_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in source_ids)
+    rows = connection.execute(
+        f"""
+        SELECT source_id, description
+        FROM source_images
+        WHERE source_id IN ({placeholders})
+        ORDER BY source_id, id
+        """,
+        source_ids,
+    ).fetchall()
+    descriptions_by_source: dict[int, list[str]] = {source_id: [] for source_id in source_ids}
+    for row in rows:
+        description = str(row["description"]).strip()
+        if description:
+            descriptions_by_source[int(row["source_id"])].append(description)
+    return descriptions_by_source
+
+
+def _persist_batch_generated_note(
+    connection: sqlite3.Connection,
+    *,
+    document_id: int,
+    generated_note,
+) -> None:
+    note_cursor = connection.execute(
+        """
+        INSERT INTO notes (document_id, source_id, note, keywords, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            document_id,
+            generated_note.source_ids[0],
+            generated_note.note_text,
+            generated_note.keywords,
+            utcnow(),
+        ),
+    )
+    note_id = int(note_cursor.lastrowid)
+    for ref_rank, source_id in enumerate(generated_note.source_ids, start=1):
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO note_sources (note_id, source_id, ref_rank)
+            VALUES (?, ?, ?)
+            """,
+            (note_id, source_id, ref_rank),
+        )
+    for mystery in generated_note.mysteries:
+        _insert_mystery(
+            connection,
+            document_id=document_id,
+            source_id=mystery.source_id,
+            note_id=note_id,
+            draft=MysteryDraft(question=mystery.question, reason=mystery.reason, keywords=mystery.keywords),
+        )
+
+
+def _flush_note_batch(
+    connection: sqlite3.Connection,
+    *,
+    provider,
+    document_id: int,
+    document_name: str,
+    batch: list[PendingBatchSource],
+) -> tuple[set[int], list[str]]:
+    if not batch:
+        return set(), []
+    source_ids = [item.source_id for item in batch]
+    image_descriptions_by_source = _load_source_image_descriptions(connection, source_ids)
+    batch_inputs = [
+        BatchNoteSourceInput(
+            source_id=item.source_id,
+            reference_label=build_reference_label(document_name, item.source.locator, item.source.page_number),
+            locator=item.source.locator,
+            page_number=item.source.page_number,
+            content=item.source.content,
+            image_descriptions=image_descriptions_by_source.get(item.source_id, []),
+        )
+        for item in batch
+    ]
+    parsed = generate_batch_notes(provider, batch_inputs)
+    covered_source_ids: set[int] = set()
+    for generated_note in parsed.notes:
+        covered_source_ids.update(generated_note.source_ids)
+        _persist_batch_generated_note(connection, document_id=document_id, generated_note=generated_note)
+    missing_locators = [item.source.locator for item in batch if item.source_id in set(parsed.missing_source_ids)]
+    return covered_source_ids, missing_locators
+
+
 def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConfig, *, document_id: int) -> None:
     try:
         document_row = connection.execute(
@@ -596,6 +723,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
         provider = build_provider(settings)
         resume_step = document_row["progress_step_name"] or "parsing document"
         if resume_step != "resolving mysteries":
+            document_note_batch_size = load_document_note_batch_size(connection)
             update_document_progress(connection, document_id, "parsing document")
             connection.commit()
             kind, parsed_sources = parse_document(stored_path, config.images_dir)
@@ -603,15 +731,16 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
             total_sources = len(parsed_sources)
             progress_noun = _source_progress_noun(kind)
             existing_sources = _load_existing_source_rows(connection, document_id)
-            completed_sources = sum(1 for row in existing_sources.values() if int(row["note_count"]) > 0)
+            completed_source_ids = {int(row["id"]) for row in existing_sources.values() if int(row["note_count"]) > 0}
             update_document_progress(
                 connection,
                 document_id,
                 "generating notes",
-                _format_progress_detail(completed_sources, total_sources, progress_noun),
+                _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
             )
             connection.commit()
 
+            pending_batch_sources: list[PendingBatchSource] = []
             for source_index, source in enumerate(parsed_sources, start=1):
                 source_key = (source.locator, source.page_number)
                 existing_source = existing_sources.get(source_key)
@@ -684,25 +813,64 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                         "UPDATE sources SET image_summary = ? WHERE id = ?",
                         ("\n".join(image_descriptions), source_id),
                     )
-                generated_note = generate_note(provider, original_name, source, image_descriptions)
-                note_cursor = connection.execute(
-                    """
-                    INSERT INTO notes (document_id, source_id, note, keywords, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (document_id, source_id, generated_note.note_text, generated_note.keywords, utcnow()),
-                )
-                note_id = int(note_cursor.lastrowid)
-                for mystery in generated_note.mysteries:
-                    _insert_mystery(
-                        connection,
-                        document_id=document_id,
-                        source_id=source_id,
-                        note_id=note_id,
-                        draft=mystery,
-                    )
-                existing_sources[source_key] = {"id": source_id, "note_count": 1}
+                pending_batch_sources.append(PendingBatchSource(source_id=source_id, source=source))
+                existing_sources[source_key] = {"id": source_id, "note_count": 0}
                 connection.commit()
+                if len(pending_batch_sources) < document_note_batch_size:
+                    continue
+                covered_source_ids, missing_locators = _flush_note_batch(
+                    connection,
+                    provider=provider,
+                    document_id=document_id,
+                    document_name=original_name,
+                    batch=pending_batch_sources,
+                )
+                completed_source_ids.update(covered_source_ids)
+                for pending_source in pending_batch_sources:
+                    if pending_source.source_id in covered_source_ids:
+                        existing_sources[(pending_source.source.locator, pending_source.source.page_number)] = {
+                            "id": pending_source.source_id,
+                            "note_count": 1,
+                        }
+                update_document_progress(
+                    connection,
+                    document_id,
+                    "generating notes",
+                    _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
+                )
+                connection.commit()
+                if missing_locators:
+                    raise RuntimeError(
+                        "Batch note generation did not return notes for source units: " + ", ".join(missing_locators)
+                    )
+                pending_batch_sources = []
+
+            if pending_batch_sources:
+                covered_source_ids, missing_locators = _flush_note_batch(
+                    connection,
+                    provider=provider,
+                    document_id=document_id,
+                    document_name=original_name,
+                    batch=pending_batch_sources,
+                )
+                completed_source_ids.update(covered_source_ids)
+                for pending_source in pending_batch_sources:
+                    if pending_source.source_id in covered_source_ids:
+                        existing_sources[(pending_source.source.locator, pending_source.source.page_number)] = {
+                            "id": pending_source.source_id,
+                            "note_count": 1,
+                        }
+                update_document_progress(
+                    connection,
+                    document_id,
+                    "generating notes",
+                    _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
+                )
+                connection.commit()
+                if missing_locators:
+                    raise RuntimeError(
+                        "Batch note generation did not return notes for source units: " + ", ".join(missing_locators)
+                    )
 
             mystery_count = connection.execute(
                 "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",

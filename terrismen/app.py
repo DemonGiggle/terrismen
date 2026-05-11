@@ -62,12 +62,14 @@ def serialize_mystery_refs(connection, mystery_ids: list[int], document_name: st
     rows = connection.execute(
         f"""
         SELECT mystery_refs.mystery_id, mystery_refs.relation_type, mystery_refs.ref_rank, mystery_refs.why_relevant, mystery_refs.note_id,
-               COALESCE(mystery_refs.source_id, note_sources.id) AS source_id,
-               COALESCE(source_refs.locator, note_sources.locator) AS locator,
-               COALESCE(source_refs.page_number, note_sources.page_number) AS page_number
+               COALESCE(mystery_refs.source_id, primary_note_sources.id) AS source_id,
+               COALESCE(source_refs.locator, primary_note_sources.locator) AS locator,
+               COALESCE(source_refs.page_number, primary_note_sources.page_number) AS page_number
         FROM mystery_refs
         LEFT JOIN notes reference_notes ON reference_notes.id = mystery_refs.note_id
-        LEFT JOIN sources note_sources ON note_sources.id = reference_notes.source_id
+        LEFT JOIN note_sources primary_note_source_links
+               ON primary_note_source_links.note_id = reference_notes.id AND primary_note_source_links.ref_rank = 1
+        LEFT JOIN sources primary_note_sources ON primary_note_sources.id = primary_note_source_links.source_id
         LEFT JOIN sources source_refs ON source_refs.id = mystery_refs.source_id
         WHERE mystery_refs.mystery_id IN ({placeholders})
         ORDER BY mystery_refs.mystery_id, mystery_refs.relation_type, mystery_refs.ref_rank, mystery_refs.id
@@ -202,7 +204,8 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
         SELECT sources.id, sources.locator, sources.page_number, sources.content, sources.image_summary, sources.metadata_json,
                notes.note, notes.keywords
         FROM sources
-        LEFT JOIN notes ON notes.source_id = sources.id
+        LEFT JOIN note_sources ON note_sources.source_id = sources.id
+        LEFT JOIN notes ON notes.id = note_sources.note_id
         WHERE sources.document_id = ?
         ORDER BY sources.id
         """,
@@ -288,7 +291,8 @@ def list_document_notes(
             """
             SELECT notes.id, notes.note, notes.keywords, notes.created_at, sources.locator, sources.page_number
             FROM notes
-            JOIN sources ON sources.id = notes.source_id
+            JOIN note_sources ON note_sources.note_id = notes.id AND note_sources.ref_rank = 1
+            JOIN sources ON sources.id = note_sources.source_id
             WHERE notes.document_id = ?
             ORDER BY notes.id ASC
             LIMIT ? OFFSET ?

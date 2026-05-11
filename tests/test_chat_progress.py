@@ -4,7 +4,7 @@ from pathlib import Path
 
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db, utcnow
-from terrismen.services.chat import continue_chat_request, create_chat_request
+from terrismen.services.chat import _load_sources, continue_chat_request, create_chat_request
 
 
 class FakeProvider:
@@ -184,4 +184,59 @@ def test_generate_answer_uses_grounded_citation_prompt(tmp_path: Path) -> None:
     assert "Every factual claim must include an inline citation" in system_prompt
     assert "do not know from the provided sources" in system_prompt
     assert "Reference: spec.pdf - Page 2" in user_prompt
+    connection.close()
+
+
+def test_load_sources_returns_note_for_secondary_source_links(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status,
+            progress_step_name, progress_step_index, progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("spec.pdf", "/tmp/spec.pdf", "application/pdf", "pdf", "ready", "finalizing document", 7, 7, "", utcnow()),
+    ).lastrowid
+    primary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, "Page 2", 2, "Primary source content.", "", "{}", utcnow()),
+    ).lastrowid
+    secondary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, "Page 3", 3, "Secondary source content.", "", "{}", utcnow()),
+    ).lastrowid
+    note_id = connection.execute(
+        """
+        INSERT INTO notes (document_id, source_id, note, keywords, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            document_id,
+            primary_source_id,
+            "A batched note that refers to both pages.\nKeywords: batched, pages",
+            "batched, pages",
+            utcnow(),
+        ),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO note_sources (note_id, source_id, ref_rank) VALUES (?, ?, ?)",
+        (note_id, secondary_source_id, 2),
+    )
+    connection.commit()
+
+    rows = _load_sources(connection, [secondary_source_id])
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == secondary_source_id
+    assert "both pages" in rows[0]["note"]
     connection.close()

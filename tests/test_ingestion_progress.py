@@ -6,6 +6,8 @@ from pathlib import Path
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db
 from terrismen.services.ingestion import (
+    _load_existing_source_rows,
+    _search_mystery_candidates,
     _resolve_document_mysteries,
     continue_document_ingestion,
     create_document_ingestion,
@@ -89,6 +91,96 @@ def test_load_mystery_resolution_reference_mode_uses_default_valid_and_invalid_v
     connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("bad-value",))
     connection.commit()
     assert load_mystery_resolution_reference_mode(connection) == "notes_only"
+    connection.close()
+
+
+def test_search_mystery_candidates_returns_secondary_source_links(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "ready", "finalizing document", "", 7, 7, "", "now"),
+    ).lastrowid
+    primary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 1", 1, "alpha content", "{}"),
+    ).lastrowid
+    secondary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 2", 2, "beta content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, primary_source_id, "Combined alpha and beta note", "alpha, beta"),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO note_sources (note_id, source_id, ref_rank) VALUES (?, ?, ?)",
+        (note_id, secondary_source_id, 2),
+    )
+    connection.commit()
+
+    rows = _search_mystery_candidates(connection, document_id=int(document_id), search_text="beta note")
+
+    assert rows
+    assert {row["source_id"] for row in rows} == {primary_source_id, secondary_source_id}
+    connection.close()
+
+
+def test_load_existing_source_rows_counts_secondary_source_links(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "ready", "finalizing document", "", 7, 7, "", "now"),
+    ).lastrowid
+    primary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 1", 1, "alpha content", "{}"),
+    ).lastrowid
+    secondary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 2", 2, "beta content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, primary_source_id, "Combined alpha and beta note", "alpha, beta"),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO note_sources (note_id, source_id, ref_rank) VALUES (?, ?, ?)",
+        (note_id, secondary_source_id, 2),
+    )
+    connection.commit()
+
+    rows = _load_existing_source_rows(connection, int(document_id))
+
+    assert rows[("Chunk 1", 1)]["note_count"] == 1
+    assert rows[("Chunk 2", 2)]["note_count"] == 1
     connection.close()
 
 

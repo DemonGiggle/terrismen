@@ -17,7 +17,7 @@ That means the prompt constants below are not just internal strings; each one be
 | --- | --- | --- | --- |
 | `NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_note(...)` | Once per parsed source unit during ingestion, after parsing and after optional image descriptions are prepared |
 | `IMAGE_PROMPT` | `terrismen/services/notes.py` | `describe_images(...)` | Once per extracted image during ingestion, before note generation for that source unit |
-| `MYSTERY_RESOLUTION_PROMPT` | `terrismen/services/notes.py` | `resolve_mystery(...)` | Once per unresolved mystery during the end-of-document resolution pass |
+| `MYSTERY_RESOLUTION_BATCH_PROMPT` | `terrismen/services/notes.py` | `resolve_mysteries(...)` / `resolve_mystery(...)` | Once per mystery-resolution model call; the contract supports one or more mysteries per call |
 | `REFERENCE_PICKER_PROMPT` | `terrismen/services/chat.py` | `_pick_source_ids(...)` | Once per chat request, after candidate notes and mystery matches are retrieved |
 | `ANSWER_PROMPT` | `terrismen/services/chat.py` | `answer_question(...)` | Once per chat request, after the relevant source IDs are selected and source blocks are loaded |
 
@@ -61,15 +61,15 @@ ingest_document(...)
                   |
                   +--> search candidate notes/source excerpts
                   |
-                  +--> resolve_mystery(...)
-                            system: MYSTERY_RESOLUTION_PROMPT
-                            user: original mystery + candidate note/source evidence
+                  +--> resolve_mysteries(...)
+                            system: MYSTERY_RESOLUTION_BATCH_PROMPT
+                            user: batch of original mysteries + candidate note/source evidence
                             |
                             v
-                       resolved/open status + referenced note/source IDs
+                       per-mystery resolved/open status + referenced note/source IDs
                             |
                             v
-                       store resolution state and refs
+                       store each mystery's resolution state and refs
 ```
 
 ### Chat flow
@@ -141,25 +141,35 @@ Describe this image in a way that helps document note taking.
 Focus on labels, diagrams, tables, captions, relationships, and anything that changes the meaning of the surrounding text.
 ```
 
-### `MYSTERY_RESOLUTION_PROMPT`
+### `MYSTERY_RESOLUTION_BATCH_PROMPT`
 
 ```text
 You review unresolved document questions after the full document has been read.
 
-Return JSON only in this shape:
+Return JSON only in this exact shape:
 {
-  "status": "resolved" or "open",
-  "summary": "concise explanation grounded in the provided material",
-  "note_ids": [1, 2],
-  "source_ids": [3, 4]
+  "results": [
+    {
+      "mystery_id": 101,
+      "status": "resolved" or "open",
+      "summary": "concise explanation grounded in the provided material",
+      "note_ids": [11, 14],
+      "source_ids": [21]
+    }
+  ]
 }
 
 Rules:
-- Use only the candidate notes and source excerpts provided.
+- Use only the candidate notes and candidate source excerpts provided for each mystery.
+- Never invent or rename mystery ids, note ids, or source ids.
+- Reference candidate IDs exactly as given for the matching mystery.
 - Mark the mystery as resolved only when the provided evidence clearly answers it.
 - If the evidence is weak or still incomplete, keep it open and explain what is still missing.
-- Reference candidate IDs exactly as given.
+- Each mystery_id must appear at most once in results.
+- Return JSON only, with no markdown fences or extra prose.
 ```
+
+`resolve_mysteries(...)` validates the batch response per mystery. Unknown IDs, duplicated IDs after the first valid entry, invalid statuses, and invalid note/source references are treated as open-item fallbacks instead of corrupting the rest of the batch. If the top-level JSON or `results` array is unusable, the whole batch falls back to open outcomes.
 
 ### `REFERENCE_PICKER_PROMPT`
 

@@ -1,6 +1,6 @@
 # LLM prompts and prompt workflow
 
-`terrismen` currently has **5 prompt constants** that are sent to the LLM as the **system** message.
+`terrismen` currently defines **6 prompt constants** that are sent to the LLM as the **system** message or are prepared for the next batch-note rollout.
 
 ## Where prompts are sent
 
@@ -16,6 +16,7 @@ That means the prompt constants below are not just internal strings; each one be
 | Prompt | File | Used by | When it is sent |
 | --- | --- | --- | --- |
 | `NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_note(...)` | Once per parsed source unit during ingestion, after parsing and after optional image descriptions are prepared |
+| `BATCH_NOTE_SYSTEM_PROMPT` | `terrismen/services/notes.py` | `generate_batch_notes(...)` | Prepared for the future batched normal-note rollout; the current runtime does not call it yet |
 | `IMAGE_PROMPT` | `terrismen/services/notes.py` | `describe_images(...)` | Once per extracted image during ingestion, before note generation for that source unit |
 | `MYSTERY_RESOLUTION_BATCH_PROMPT` | `terrismen/services/notes.py` | `resolve_mysteries(...)` / `resolve_mystery(...)` | Once per mystery-resolution model call; the contract supports one or more mysteries per call |
 | `REFERENCE_PICKER_PROMPT` | `terrismen/services/chat.py` | `_pick_source_ids(...)` | Once per chat request, after candidate notes and mystery matches are retrieved |
@@ -145,6 +146,43 @@ Requirements:
 Describe this image in a way that helps document note taking.
 Focus on labels, diagrams, tables, captions, relationships, and anything that changes the meaning of the surrounding text.
 ```
+
+### `BATCH_NOTE_SYSTEM_PROMPT`
+
+```text
+You create dense retrieval-friendly notes from one or more related document source units.
+
+Requirements:
+- Preserve important requirements, technical flows, caveats, thresholds, and edge cases.
+- Do not flatten important details into vague summaries.
+- Mention image observations when supplied.
+- Prefer one note per source unit unless nearby source units are tightly related and clearly benefit from one combined note.
+- Every input source_id should appear in at most one returned note.
+- If a note covers several source units, list source_ids in primary-to-secondary order and put the main source first.
+- Every mystery must name exactly one origin source_id, and that source_id must appear in the same note's source_ids.
+- Return JSON only in this exact shape:
+  {
+    "notes": [
+      {
+        "source_ids": [101, 102],
+        "note": "dense note text",
+        "keywords": ["item1", "item2"],
+        "mysteries": [
+          {
+            "source_id": 101,
+            "question": "what remains unclear or unresolved?",
+            "reason": "why it is still unclear after reading the provided source unit",
+            "keywords": ["item1", "item2"]
+          }
+        ]
+      }
+    ]
+  }
+- Use only the provided source_ids exactly as given.
+- Return JSON only, with no markdown fences or extra prose.
+```
+
+`generate_batch_notes(...)` and `parse_batch_notes_response(...)` validate the response against the provided source IDs. Valid note items are salvaged individually, cross-note duplicate source coverage is rejected, malformed mysteries are dropped from otherwise valid notes, and uncovered input source IDs are tracked explicitly so the future ingestion wiring can retry or surface them safely.
 
 ### `MYSTERY_RESOLUTION_BATCH_PROMPT`
 

@@ -30,5 +30,8 @@ terrismen = "terrismen.app:main"
 [tool.setuptools.packages.find]
 include = ["terrismen*"]
 
+[tool.setuptools.package-data]
+terrismen = ["web/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

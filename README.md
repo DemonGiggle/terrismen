@@ -38,7 +38,7 @@ See [`docs/technical-overview.md`](docs/technical-overview.md) for the full inge
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.10+
 - A compatible model endpoint:
   - OpenAI-compatible: `POST /v1/chat/completions`
   - Ollama: `POST /api/chat`
@@ -47,8 +47,10 @@ See [`docs/technical-overview.md`](docs/technical-overview.md) for the full inge
 ## Run locally
 
 ```bash
-python3 -m venv .venv
+python3.10 -m venv .venv
 source .venv/bin/activate
+python --version
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 terrismen
 ```

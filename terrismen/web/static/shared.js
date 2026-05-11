@@ -66,7 +66,7 @@ export function renderMarkdown(value) {
 
     const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
-      const level = headingMatch[1].length + 2;
+      const level = Math.min(headingMatch[1].length + 2, 6);
       blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
       index += 1;
       continue;

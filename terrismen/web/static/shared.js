@@ -396,7 +396,7 @@ function extractInlineMath(value, mathSpans) {
   let index = 0;
 
   while (index < value.length) {
-    if (value.startsWith("\\(", index)) {
+    if (value.startsWith("\\(", index) && !isEscapedAt(value, index)) {
       const endIndex = value.indexOf("\\)", index + 2);
       if (endIndex !== -1) {
         mathSpans.push(`<span class="math-inline">\\(${escapeHtml(value.slice(index + 2, endIndex))}\\)</span>`);
@@ -406,7 +406,13 @@ function extractInlineMath(value, mathSpans) {
       }
     }
 
-    if (value[index] === "$" && value[index - 1] !== "\\" && value[index + 1] !== "$") {
+    if (value.startsWith("$$", index) && !isEscapedAt(value, index)) {
+      result += "$$";
+      index += 2;
+      continue;
+    }
+
+    if (value[index] === "$" && !isEscapedAt(value, index) && value[index + 1] !== "$") {
       const endIndex = findInlineDollarMathEnd(value, index + 1);
       if (endIndex !== -1) {
         mathSpans.push(`<span class="math-inline">\\(${escapeHtml(value.slice(index + 1, endIndex))}\\)</span>`);
@@ -428,11 +434,22 @@ function findInlineDollarMathEnd(value, startIndex) {
     if (value[index] === "\n") {
       return -1;
     }
-    if (value[index] === "$" && value[index - 1] !== "\\" && value[index + 1] !== "$") {
+    if (value.startsWith("$$", index) && !isEscapedAt(value, index)) {
+      return -1;
+    }
+    if (value[index] === "$" && !isEscapedAt(value, index) && value[index + 1] !== "$") {
       return index;
     }
   }
   return -1;
+}
+
+function isEscapedAt(value, index) {
+  let backslashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashCount += 1;
+  }
+  return backslashCount % 2 === 1;
 }
 
 function restorePlaceholders(value, prefix, entries) {

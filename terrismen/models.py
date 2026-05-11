@@ -9,6 +9,7 @@ ProviderType = Literal["openai_compatible", "ollama"]
 
 
 class ProviderSettingsPayload(BaseModel):
+    data_root: str = Field(min_length=1)
     provider_type: ProviderType
     base_url: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -16,7 +17,7 @@ class ProviderSettingsPayload(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_timeout_seconds: float = Field(default=600.0, ge=60.0, le=3600.0)
 
-    @field_validator("base_url", "model", mode="before")
+    @field_validator("data_root", "base_url", "model", mode="before")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return value.strip()

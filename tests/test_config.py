@@ -49,3 +49,18 @@ def test_switch_data_root_rejects_ui_change_when_env_controls_path(tmp_path, mon
 
     with pytest.raises(ValueError, match="controlled by TERRISMEN_DATA_ROOT"):
         switch_data_root(config, str(tmp_path / "other-data"))
+
+
+def test_switch_data_root_rejects_file_destination(tmp_path, monkeypatch) -> None:
+    app_config_path = tmp_path / "app-config.json"
+    old_data_root = tmp_path / "old-data"
+    file_destination = tmp_path / "occupied-path"
+    monkeypatch.delenv("TERRISMEN_DATA_ROOT", raising=False)
+    monkeypatch.setenv("TERRISMEN_APP_CONFIG", str(app_config_path))
+    save_data_root_override(app_config_path, old_data_root)
+    file_destination.write_text("not a directory", encoding="utf-8")
+
+    config = load_config()
+
+    with pytest.raises(ValueError, match="already exists and is not empty"):
+        switch_data_root(config, str(file_destination))

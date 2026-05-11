@@ -47,7 +47,7 @@ def switch_data_root(current_config: AppConfig, requested_path: str) -> AppConfi
     if new_root.is_relative_to(current_root):
         raise ValueError("Data folder cannot be moved inside the current data folder.")
     if new_root.exists():
-        if any(new_root.iterdir()):
+        if not new_root.is_dir() or any(new_root.iterdir()):
             raise ValueError("Target data folder already exists and is not empty.")
         new_root.rmdir()
 
@@ -86,8 +86,8 @@ def load_config() -> AppConfig:
     app_config_path = _app_config_path()
     env_data_root = os.getenv(DATA_ROOT_ENV_VAR)
     saved_data_root = _load_saved_data_root(app_config_path)
-    data_root = Path(env_data_root).expanduser().resolve() if env_data_root else saved_data_root or (project_root / "data")
-    data_root = data_root.expanduser().resolve()
+    raw_data_root = env_data_root or saved_data_root or (project_root / "data")
+    data_root = Path(raw_data_root).expanduser().resolve()
     uploads_dir = data_root / "uploads"
     images_dir = data_root / "images"
     uploads_dir.mkdir(parents=True, exist_ok=True)

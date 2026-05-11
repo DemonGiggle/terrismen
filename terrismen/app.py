@@ -116,33 +116,16 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
     global config
 
     try:
+        active_connection = connection
+        replacement_connection = None
         if Path(payload.data_root).expanduser().resolve() != config.data_root:
             connection.close()
             config = switch_data_root(config, payload.data_root)
             init_db(config.database_path)
-            with connect(config.database_path) as new_connection:
-                new_connection.execute(
-                    """
-                    UPDATE settings
-                    SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
-                    WHERE id = 1
-                    """,
-                    (
-                        payload.provider_type,
-                        payload.base_url,
-                        payload.model,
-                        payload.api_key,
-                        payload.temperature,
-                        payload.llm_timeout_seconds,
-                    ),
-                )
-                new_connection.commit()
-                row = new_connection.execute(
-                    "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
-                ).fetchone()
-                return serialize_settings(row)
+            replacement_connection = connect(config.database_path)
+            active_connection = replacement_connection
 
-        connection.execute(
+        active_connection.execute(
             """
             UPDATE settings
             SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
@@ -157,10 +140,16 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
                 payload.llm_timeout_seconds,
             ),
         )
-        connection.commit()
-        return get_settings(connection)
+        active_connection.commit()
+        row = active_connection.execute(
+            "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
+        ).fetchone()
+        return serialize_settings(row)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        if replacement_connection is not None:
+            replacement_connection.close()
 
 
 @app.get("/api/documents")

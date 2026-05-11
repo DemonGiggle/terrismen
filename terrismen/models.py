@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 ProviderType = Literal["openai_compatible", "ollama"]
+MysteryResolutionReferenceMode = Literal["notes_only", "notes_and_sources"]
 
 
 class ProviderSettingsPayload(BaseModel):
@@ -17,6 +18,7 @@ class ProviderSettingsPayload(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_timeout_seconds: float = Field(default=600.0, ge=60.0, le=3600.0)
     mystery_resolution_batch_size: int = Field(default=5, ge=1, le=20)
+    mystery_resolution_reference_mode: MysteryResolutionReferenceMode = "notes_only"
 
     @field_validator("data_root", "base_url", "model", mode="before")
     @classmethod

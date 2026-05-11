@@ -73,6 +73,14 @@
               <input name="mystery_resolution_batch_size" type="number" step="1" min="1" max="20" value="5">
             </label>
             <p class="meta">Target unresolved mysteries per model call once batch mystery resolution is enabled. Default 5; valid range 1-20.</p>
+            <label>
+              Mystery reference mode
+              <select name="mystery_resolution_reference_mode">
+                <option value="notes_only">Notes only</option>
+                <option value="notes_and_sources">Notes + sources</option>
+              </select>
+            </label>
+            <p class="meta">Notes only keeps prompts smaller by default. Notes + sources also includes raw source excerpts for stronger grounding.</p>
             <button type="submit">Save settings</button>
           </form>
         </section>

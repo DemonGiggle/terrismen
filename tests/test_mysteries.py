@@ -178,6 +178,42 @@ def test_resolve_mysteries_builds_batch_prompt_and_parses_full_batch() -> None:
     assert '"candidate_sources"' in provider.calls[0][1]
 
 
+def test_resolve_mysteries_can_omit_source_excerpts_from_prompt() -> None:
+    provider = FakeProvider(
+        [
+            """
+            {"results":[{"mystery_id":801,"status":"open","summary":"Still open.","note_ids":[],"source_ids":[]}]}
+            """
+        ]
+    )
+    request = build_mystery_resolution_request(
+        "spec.pdf",
+        {
+            "id": 801,
+            "question": "What tie-breaker decides between equal scores?",
+            "reason": "The ranking section omits tie handling.",
+            "keywords": "ranking, tie-breaker",
+            "origin_locator": "Page 3",
+            "origin_page_number": 3,
+        },
+        [
+            {
+                "note_id": 14,
+                "source_id": 24,
+                "locator": "Page 9",
+                "page_number": 9,
+                "note": "The retrieval section repeats BM25 but never explains ties.",
+                "content": "No tie-breaker is given in the later section either.",
+            }
+        ],
+    )
+
+    resolve_mysteries(provider, [request], include_source_excerpts=False)
+
+    assert '"candidate_sources": []' in provider.calls[0][1]
+    assert "No tie-breaker is given in the later section either." not in provider.calls[0][1]
+
+
 def test_parse_batch_mystery_response_supports_mixed_outcomes() -> None:
     requests = [
         build_mystery_resolution_request(

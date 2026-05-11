@@ -107,7 +107,8 @@ def health() -> dict[str, str]:
 def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
         """
-        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, mystery_resolution_batch_size
+        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds,
+               mystery_resolution_batch_size, mystery_resolution_reference_mode
         FROM settings
         WHERE id = 1
         """
@@ -133,7 +134,7 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
             """
             UPDATE settings
             SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?,
-                mystery_resolution_batch_size = ?
+                mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
             WHERE id = 1
             """,
             (
@@ -144,12 +145,14 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
                 payload.temperature,
                 payload.llm_timeout_seconds,
                 payload.mystery_resolution_batch_size,
+                payload.mystery_resolution_reference_mode,
             ),
         )
         active_connection.commit()
         row = active_connection.execute(
             """
-            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, mystery_resolution_batch_size
+            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds,
+                   mystery_resolution_batch_size, mystery_resolution_reference_mode
             FROM settings
             WHERE id = 1
             """

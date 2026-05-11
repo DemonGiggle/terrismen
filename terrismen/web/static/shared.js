@@ -178,6 +178,7 @@ export function summarizeSettings(settings) {
     settings.api_key ? "API key saved" : "No API key saved",
     `${Math.round(settings.llm_timeout_seconds ?? 600)}s timeout`,
     `mystery batch ${settings.mystery_resolution_batch_size ?? 5}`,
+    settings.mystery_resolution_reference_mode === "notes_and_sources" ? "notes + sources refs" : "notes-only refs",
   ].join(" • ");
 }
 

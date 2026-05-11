@@ -34,6 +34,8 @@ function populateSettingsForm(settings) {
   elements.settingsForm.temperature.value = settings.temperature ?? 0.2;
   elements.settingsForm.llm_timeout_seconds.value = settings.llm_timeout_seconds ?? 600;
   elements.settingsForm.mystery_resolution_batch_size.value = settings.mystery_resolution_batch_size ?? 5;
+  elements.settingsForm.mystery_resolution_reference_mode.value =
+    settings.mystery_resolution_reference_mode || "notes_only";
 }
 
 async function loadSettings() {
@@ -58,6 +60,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
         temperature: Number(formData.get("temperature")),
         llm_timeout_seconds: Number(formData.get("llm_timeout_seconds")),
         mystery_resolution_batch_size: Number(formData.get("mystery_resolution_batch_size")),
+        mystery_resolution_reference_mode: formData.get("mystery_resolution_reference_mode"),
       }),
     });
     populateSettingsForm(savedSettings);

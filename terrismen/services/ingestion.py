@@ -26,6 +26,8 @@ INGESTION_STEPS: Final[tuple[str, ...]] = (
 )
 DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE = 5
 MAX_MYSTERY_RESOLUTION_BATCH_SIZE = 20
+DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE = "notes_only"
+MYSTERY_RESOLUTION_REFERENCE_MODES = {"notes_only", "notes_and_sources"}
 
 
 def file_extension(name: str) -> str:
@@ -71,6 +73,22 @@ def load_mystery_resolution_batch_size(connection: sqlite3.Connection) -> int:
     if row is None:
         return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
     return normalize_mystery_resolution_batch_size(row["mystery_resolution_batch_size"])
+
+
+def normalize_mystery_resolution_reference_mode(value: object) -> str:
+    if not isinstance(value, str):
+        return DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE
+    mode = value.strip().lower()
+    if mode not in MYSTERY_RESOLUTION_REFERENCE_MODES:
+        return DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE
+    return mode
+
+
+def load_mystery_resolution_reference_mode(connection: sqlite3.Connection) -> str:
+    row = connection.execute("SELECT mystery_resolution_reference_mode FROM settings WHERE id = 1").fetchone()
+    if row is None:
+        return DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE
+    return normalize_mystery_resolution_reference_mode(row["mystery_resolution_reference_mode"])
 
 
 def update_document_progress(
@@ -218,6 +236,8 @@ def _resolve_document_mysteries(
     document_id: int,
     document_name: str,
 ) -> None:
+    reference_mode = load_mystery_resolution_reference_mode(connection)
+    include_source_excerpts = reference_mode == "notes_and_sources"
     total_mysteries = connection.execute(
         "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",
         (document_id,),
@@ -277,14 +297,24 @@ def _resolve_document_mysteries(
             )
             continue
 
-        resolution = resolve_mystery(provider, document_name, mystery, candidates)
+        resolution = resolve_mystery(
+            provider,
+            document_name,
+            mystery,
+            candidates,
+            include_source_excerpts=include_source_excerpts,
+        )
         candidate_note_map = {int(candidate["note_id"]): candidate for candidate in candidates if candidate["note_id"] is not None}
         candidate_source_map = {
             int(candidate["source_id"]): candidate for candidate in candidates if candidate["source_id"] is not None
         }
 
         note_ids = [note_id for note_id in resolution.note_ids if note_id in candidate_note_map]
-        source_ids = [source_id for source_id in resolution.source_ids if source_id in candidate_source_map]
+        source_ids = (
+            [source_id for source_id in resolution.source_ids if source_id in candidate_source_map]
+            if include_source_excerpts
+            else []
+        )
         for note_id in note_ids:
             source_id = int(candidate_note_map[note_id]["source_id"])
             if source_id not in source_ids:

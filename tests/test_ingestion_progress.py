@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from terrismen.config import AppConfig
@@ -12,7 +13,7 @@ from terrismen.services.ingestion import (
     load_mystery_resolution_reference_mode,
     retry_document_ingestion,
 )
-from terrismen.services.notes import GeneratedNote, MysteryResolution
+from terrismen.services.notes import GeneratedNote, MysteryBatchResolution, MysteryDraft, MysteryResolution
 from terrismen.services.parsers import ParsedSource, ParserError
 
 
@@ -227,6 +228,260 @@ def test_resolve_document_mysteries_notes_and_sources_mode_persists_source_refs(
     connection.close()
 
 
+def test_continue_document_ingestion_batches_mysteries_by_setting_and_handles_final_short_batch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute(
+        """
+        UPDATE settings
+        SET mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
+        WHERE id = 1
+        """,
+        (2, "notes_only"),
+    )
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\ngamma\n",
+    )
+    connection.close()
+
+    class BatchProvider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def complete(self, system_prompt: str, user_prompt: str, *, images=None) -> str:
+            payload = json.loads(user_prompt.split("Batch input:\n", 1)[1])
+            mysteries = payload["mysteries"]
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                return json.dumps(
+                    {
+                        "results": [
+                            {
+                                "mystery_id": mysteries[0]["mystery_id"],
+                                "status": "resolved",
+                                "summary": "Resolved from a later note.",
+                                "note_ids": [mysteries[0]["candidate_notes"][0]["note_id"]],
+                                "source_ids": [],
+                            },
+                            {
+                                "mystery_id": mysteries[1]["mystery_id"],
+                                "status": "open",
+                                "summary": "Still unresolved after reviewing later notes.",
+                                "note_ids": [],
+                                "source_ids": [],
+                            },
+                        ]
+                    }
+                )
+            return json.dumps(
+                {
+                    "results": [
+                        {
+                            "mystery_id": mysteries[0]["mystery_id"],
+                            "status": "resolved",
+                            "summary": "This result invents note ids.",
+                            "note_ids": [999999],
+                            "source_ids": [],
+                        }
+                    ]
+                }
+            )
+
+    provider = BatchProvider()
+    generated_notes = iter(
+        [
+            GeneratedNote(
+                note_text="Alpha note\nKeywords: alpha",
+                keywords="alpha",
+                mysteries=[MysteryDraft(question="alpha mystery?", reason="alpha gap", keywords="alpha")],
+            ),
+            GeneratedNote(
+                note_text="Beta note\nKeywords: beta",
+                keywords="beta",
+                mysteries=[MysteryDraft(question="beta mystery?", reason="beta gap", keywords="beta")],
+            ),
+            GeneratedNote(
+                note_text="Gamma note\nKeywords: gamma",
+                keywords="gamma",
+                mysteries=[MysteryDraft(question="gamma mystery?", reason="gamma gap", keywords="gamma")],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: provider)
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.parse_document",
+        lambda file_path, images_dir: (
+            "text",
+            [
+                ParsedSource(locator="Chunk 1", content="alpha content", page_number=1),
+                ParsedSource(locator="Chunk 2", content="beta content", page_number=2),
+                ParsedSource(locator="Chunk 3", content="gamma content", page_number=3),
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.generate_note",
+        lambda provider, document_name, source, image_descriptions: next(generated_notes),
+    )
+
+    def search_candidates(connection, document_id, search_text, limit=8):
+        keyword = "alpha" if "alpha" in search_text else "beta" if "beta" in search_text else "gamma"
+        rows = connection.execute(
+            """
+            SELECT notes.id AS note_id, notes.source_id, notes.note, notes.keywords, sources.content, sources.locator, sources.page_number
+            FROM notes
+            JOIN sources ON sources.id = notes.source_id
+            WHERE notes.document_id = ? AND notes.keywords LIKE ?
+            ORDER BY notes.id
+            LIMIT ?
+            """,
+            (document_id, f"%{keyword}%", limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    monkeypatch.setattr("terrismen.services.ingestion._search_mystery_candidates", search_candidates)
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    rows = check_connection.execute(
+        "SELECT question, status, resolution_summary FROM unresolved_mysteries WHERE document_id = ? ORDER BY id",
+        (document_id,),
+    ).fetchall()
+    document_row = check_connection.execute(
+        "SELECT status, progress_step_name FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+
+    assert [len(call["mysteries"]) for call in provider.calls] == [2, 1]
+    assert [row["status"] for row in rows] == ["resolved", "open", "open"]
+    assert rows[0]["resolution_summary"] == "Resolved from a later note."
+    assert rows[1]["resolution_summary"] == "Still unresolved after reviewing later notes."
+    assert "invalid result for this mystery" in rows[2]["resolution_summary"].lower()
+    assert document_row["status"] == "ready"
+    assert document_row["progress_step_name"] == "finalizing document"
+    check_connection.close()
+
+
+def test_resolve_document_mysteries_applies_mixed_batch_results_independently(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute(
+        """
+        UPDATE settings
+        SET mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
+        WHERE id = 1
+        """,
+        (3, "notes_only"),
+    )
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "processing", "resolving mysteries", "", 6, 7, "", "now"),
+    ).lastrowid
+    seeded = [seed_open_mystery(connection, int(document_id)) for _ in range(3)]
+
+    class MixedBatchProvider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def complete(self, system_prompt: str, user_prompt: str, *, images=None) -> str:
+            payload = json.loads(user_prompt.split("Batch input:\n", 1)[1])
+            self.calls.append(payload)
+            mysteries = payload["mysteries"]
+            return json.dumps(
+                {
+                    "results": [
+                        {
+                            "mystery_id": mysteries[0]["mystery_id"],
+                            "status": "resolved",
+                            "summary": "Resolved from later notes.",
+                            "note_ids": [mysteries[0]["candidate_notes"][0]["note_id"]],
+                            "source_ids": [],
+                        },
+                        {
+                            "mystery_id": mysteries[1]["mystery_id"],
+                            "status": "open",
+                            "summary": "Still open after reviewing the later notes.",
+                            "note_ids": [],
+                            "source_ids": [],
+                        },
+                        {
+                            "mystery_id": mysteries[2]["mystery_id"],
+                            "status": "resolved",
+                            "summary": "Invented ids.",
+                            "note_ids": [999999],
+                            "source_ids": [],
+                        },
+                    ]
+                }
+            )
+
+    provider = MixedBatchProvider()
+
+    def candidate_for_mystery(connection, document_id, search_text, limit=8):
+        index = 0 if "alpha" not in search_text else 0
+        if "second" in search_text:
+            index = 1
+        if "third" in search_text:
+            index = 2
+        source_id, note_id, _ = seeded[index]
+        row = connection.execute(
+            """
+            SELECT notes.id AS note_id, notes.source_id, notes.note, notes.keywords, sources.content, sources.locator, sources.page_number
+            FROM notes
+            JOIN sources ON sources.id = notes.source_id
+            WHERE notes.id = ?
+            """,
+            (note_id,),
+        ).fetchone()
+        return [dict(row)]
+
+    questions = ["first mystery?", "second mystery?", "third mystery?"]
+    for (_, _, mystery_id), question in zip(seeded, questions, strict=True):
+        connection.execute("UPDATE unresolved_mysteries SET question = ?, keywords = ? WHERE id = ?", (question, question, mystery_id))
+    connection.commit()
+    monkeypatch.setattr("terrismen.services.ingestion._search_mystery_candidates", candidate_for_mystery)
+
+    _resolve_document_mysteries(connection, provider=provider, document_id=int(document_id), document_name="notes.txt")
+
+    rows = connection.execute(
+        """
+        SELECT question, status, resolution_summary, resolution_note_id, resolution_source_id
+        FROM unresolved_mysteries
+        WHERE document_id = ?
+        ORDER BY id
+        """,
+        (document_id,),
+    ).fetchall()
+
+    assert len(provider.calls) == 1
+    assert [row["status"] for row in rows] == ["resolved", "open", "open"]
+    assert rows[0]["resolution_note_id"] is not None
+    assert rows[0]["resolution_source_id"] is not None
+    assert rows[1]["resolution_note_id"] is None
+    assert rows[1]["resolution_source_id"] is None
+    assert "invalid result for this mystery" in rows[2]["resolution_summary"].lower()
+    connection.close()
+
+
 def test_create_document_ingestion_records_initial_progress(tmp_path: Path) -> None:
     config = build_config(tmp_path)
     init_db(config.database_path)
@@ -277,16 +532,6 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
             mysteries=[],
         ),
     )
-    monkeypatch.setattr(
-        "terrismen.services.ingestion.resolve_mystery",
-        lambda provider, document_name, mystery, candidates, **kwargs: MysteryResolution(
-            status="open",
-            summary="Still open",
-            note_ids=[],
-            source_ids=[],
-        ),
-    )
-
     continue_document_ingestion(config, document_id)
 
     check_connection = connect(config.database_path)
@@ -594,11 +839,20 @@ def test_continue_document_ingestion_resumes_only_open_mysteries(tmp_path: Path,
     monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
     seen_questions: list[str] = []
 
-    def fake_resolve_mystery(provider, document_name, mystery, candidates, **kwargs):
-        seen_questions.append(str(mystery["question"]))
-        return MysteryResolution(status="resolved", summary="Now resolved", note_ids=[note_id], source_ids=[source_id])
+    def fake_resolve_mysteries(provider, requests, include_source_excerpts=True):
+        seen_questions.extend(str(request.question) for request in requests)
+        return [
+            MysteryBatchResolution(
+                mystery_id=request.mystery_id,
+                status="resolved",
+                summary="Now resolved",
+                note_ids=[note_id],
+                source_ids=[source_id],
+            )
+            for request in requests
+        ]
 
-    monkeypatch.setattr("terrismen.services.ingestion.resolve_mystery", fake_resolve_mystery)
+    monkeypatch.setattr("terrismen.services.ingestion.resolve_mysteries", fake_resolve_mysteries)
     monkeypatch.setattr(
         "terrismen.services.ingestion._search_mystery_candidates",
         lambda connection, document_id, search_text, limit=8: [

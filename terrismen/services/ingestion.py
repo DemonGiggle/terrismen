@@ -4,6 +4,7 @@ import json
 import sqlite3
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -11,7 +12,15 @@ from terrismen.config import AppConfig
 from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
 from terrismen.llm.base import ProviderError
-from terrismen.services.notes import MysteryDraft, describe_images, generate_note, resolve_mystery
+from terrismen.services.notes import (
+    MysteryDraft,
+    MysteryResolutionRequest,
+    build_mystery_resolution_request,
+    describe_images,
+    generate_note,
+    resolve_mysteries,
+    resolve_mystery,
+)
 from terrismen.services.parsers import ParserError, parse_document
 from terrismen.services.retrieval import build_fts_query
 
@@ -28,6 +37,14 @@ DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE = 5
 MAX_MYSTERY_RESOLUTION_BATCH_SIZE = 20
 DEFAULT_MYSTERY_RESOLUTION_REFERENCE_MODE = "notes_only"
 MYSTERY_RESOLUTION_REFERENCE_MODES = {"notes_only", "notes_and_sources"}
+
+
+@dataclass(slots=True)
+class PreparedMysteryResolution:
+    mystery: dict[str, object]
+    request: MysteryResolutionRequest
+    candidate_note_map: dict[int, dict[str, object]]
+    candidate_source_map: dict[int, dict[str, object]]
 
 
 def file_extension(name: str) -> str:
@@ -229,6 +246,100 @@ def _replace_resolution_refs(
         )
 
 
+def _prepare_mystery_resolution(
+    document_name: str,
+    mystery: dict[str, object],
+    candidates: list[dict[str, object]],
+) -> PreparedMysteryResolution:
+    return PreparedMysteryResolution(
+        mystery=mystery,
+        request=build_mystery_resolution_request(document_name, mystery, candidates),
+        candidate_note_map={
+            int(candidate["note_id"]): candidate for candidate in candidates if candidate["note_id"] is not None
+        },
+        candidate_source_map={
+            int(candidate["source_id"]): candidate for candidate in candidates if candidate["source_id"] is not None
+        },
+    )
+
+
+def _apply_mystery_resolution_result(
+    connection: sqlite3.Connection,
+    *,
+    prepared: PreparedMysteryResolution,
+    resolution,
+    include_source_excerpts: bool,
+) -> None:
+    note_ids = [note_id for note_id in resolution.note_ids if note_id in prepared.candidate_note_map]
+    source_ids = (
+        [source_id for source_id in resolution.source_ids if source_id in prepared.candidate_source_map]
+        if include_source_excerpts
+        else []
+    )
+    for note_id in note_ids:
+        source_id = int(prepared.candidate_note_map[note_id]["source_id"])
+        if source_id not in source_ids:
+            source_ids.append(source_id)
+
+    note_ids = list(OrderedDict.fromkeys(note_ids))
+    source_ids = list(OrderedDict.fromkeys(source_ids))
+    primary_note_id = note_ids[0] if note_ids else None
+    primary_source_id = source_ids[0] if source_ids else None
+    resolved = resolution.status == "resolved" and (primary_note_id is not None or primary_source_id is not None)
+    summary = resolution.summary.strip()
+    if not summary and not resolved:
+        summary = "The document still does not provide enough evidence to resolve this mystery."
+    if not summary and resolved:
+        summary = "This mystery was resolved from later notes and source excerpts."
+
+    connection.execute(
+        """
+        UPDATE unresolved_mysteries
+        SET status = ?, resolution_summary = ?, resolution_note_id = ?, resolution_source_id = ?, resolved_at = ?
+        WHERE id = ?
+        """,
+        (
+            "resolved" if resolved else "open",
+            summary,
+            primary_note_id,
+            primary_source_id,
+            utcnow() if resolved else None,
+            prepared.mystery["id"],
+        ),
+    )
+    _replace_resolution_refs(
+        connection,
+        mystery_id=int(prepared.mystery["id"]),
+        note_ids=note_ids,
+        source_ids=source_ids,
+    )
+
+
+def _flush_mystery_batch(
+    connection: sqlite3.Connection,
+    *,
+    provider,
+    document_name: str,
+    batch: list[PreparedMysteryResolution],
+    include_source_excerpts: bool,
+) -> int:
+    if not batch:
+        return 0
+    resolutions = resolve_mysteries(
+        provider,
+        [item.request for item in batch],
+        include_source_excerpts=include_source_excerpts,
+    )
+    for prepared, resolution in zip(batch, resolutions, strict=True):
+        _apply_mystery_resolution_result(
+            connection,
+            prepared=prepared,
+            resolution=resolution,
+            include_source_excerpts=include_source_excerpts,
+        )
+    return len(batch)
+
+
 def _resolve_document_mysteries(
     connection: sqlite3.Connection,
     *,
@@ -237,6 +348,7 @@ def _resolve_document_mysteries(
     document_name: str,
 ) -> None:
     reference_mode = load_mystery_resolution_reference_mode(connection)
+    batch_size = load_mystery_resolution_batch_size(connection)
     include_source_excerpts = reference_mode == "notes_and_sources"
     total_mysteries = connection.execute(
         "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",
@@ -272,20 +384,30 @@ def _resolve_document_mysteries(
         connection.commit()
         return
 
-    for mystery_index, mystery_row in enumerate(mysteries, start=1):
-        update_document_progress(
-            connection,
-            document_id,
-            "resolving mysteries",
-            _format_progress_detail(resolved_count + mystery_index, total_mysteries, "mysteries"),
-        )
-        connection.commit()
+    processed_count = resolved_count
+    pending_batch: list[PreparedMysteryResolution] = []
+    for mystery_row in mysteries:
         mystery = dict(mystery_row)
         search_text = " ".join(
             item for item in [mystery["question"], mystery["reason"], mystery["keywords"]] if item
         ).strip()
         candidates = _search_mystery_candidates(connection, document_id=document_id, search_text=search_text)
         if not candidates:
+            processed_count += _flush_mystery_batch(
+                connection,
+                provider=provider,
+                document_name=document_name,
+                batch=pending_batch,
+                include_source_excerpts=include_source_excerpts,
+            )
+            pending_batch = []
+            update_document_progress(
+                connection,
+                document_id,
+                "resolving mysteries",
+                _format_progress_detail(processed_count, total_mysteries, "mysteries"),
+            )
+            connection.commit()
             connection.execute(
                 """
                 UPDATE unresolved_mysteries
@@ -295,63 +417,50 @@ def _resolve_document_mysteries(
                 """,
                 (mystery["id"],),
             )
+            processed_count += 1
+            update_document_progress(
+                connection,
+                document_id,
+                "resolving mysteries",
+                _format_progress_detail(processed_count, total_mysteries, "mysteries"),
+            )
+            connection.commit()
             continue
 
-        resolution = resolve_mystery(
-            provider,
-            document_name,
-            mystery,
-            candidates,
+        pending_batch.append(_prepare_mystery_resolution(document_name, mystery, candidates))
+        if len(pending_batch) < batch_size:
+            continue
+        processed_count += _flush_mystery_batch(
+            connection,
+            provider=provider,
+            document_name=document_name,
+            batch=pending_batch,
             include_source_excerpts=include_source_excerpts,
         )
-        candidate_note_map = {int(candidate["note_id"]): candidate for candidate in candidates if candidate["note_id"] is not None}
-        candidate_source_map = {
-            int(candidate["source_id"]): candidate for candidate in candidates if candidate["source_id"] is not None
-        }
-
-        note_ids = [note_id for note_id in resolution.note_ids if note_id in candidate_note_map]
-        source_ids = (
-            [source_id for source_id in resolution.source_ids if source_id in candidate_source_map]
-            if include_source_excerpts
-            else []
-        )
-        for note_id in note_ids:
-            source_id = int(candidate_note_map[note_id]["source_id"])
-            if source_id not in source_ids:
-                source_ids.append(source_id)
-
-        note_ids = list(OrderedDict.fromkeys(note_ids))
-        source_ids = list(OrderedDict.fromkeys(source_ids))
-        primary_note_id = note_ids[0] if note_ids else None
-        primary_source_id = source_ids[0] if source_ids else None
-        resolved = resolution.status == "resolved" and (primary_note_id is not None or primary_source_id is not None)
-        summary = resolution.summary.strip()
-        if not summary and not resolved:
-            summary = "The document still does not provide enough evidence to resolve this mystery."
-        if not summary and resolved:
-            summary = "This mystery was resolved from later notes and source excerpts."
-
-        connection.execute(
-            """
-            UPDATE unresolved_mysteries
-            SET status = ?, resolution_summary = ?, resolution_note_id = ?, resolution_source_id = ?, resolved_at = ?
-            WHERE id = ?
-            """,
-            (
-                "resolved" if resolved else "open",
-                summary,
-                primary_note_id,
-                primary_source_id,
-                utcnow() if resolved else None,
-                mystery["id"],
-            ),
-        )
-        _replace_resolution_refs(
+        pending_batch = []
+        update_document_progress(
             connection,
-            mystery_id=int(mystery["id"]),
-            note_ids=note_ids,
-            source_ids=source_ids,
+            document_id,
+            "resolving mysteries",
+            _format_progress_detail(processed_count, total_mysteries, "mysteries"),
         )
+        connection.commit()
+
+    if pending_batch:
+        processed_count += _flush_mystery_batch(
+            connection,
+            provider=provider,
+            document_name=document_name,
+            batch=pending_batch,
+            include_source_excerpts=include_source_excerpts,
+        )
+        update_document_progress(
+            connection,
+            document_id,
+            "resolving mysteries",
+            _format_progress_detail(processed_count, total_mysteries, "mysteries"),
+        )
+        connection.commit()
 
 
 def create_document_ingestion(

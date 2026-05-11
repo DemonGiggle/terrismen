@@ -69,8 +69,13 @@ ingest_document(...)
                        per-mystery resolved/open status + referenced note/source IDs
                             |
                             v
-                       store each mystery's resolution state and refs
+                        store each mystery's resolution state and refs
 ```
+
+Terminology note:
+
+- `document_note_batch_size` is the saved setting for the upcoming batched normal-note rollout and is defined in **source units** (PDF pages, text chunks, spreadsheet row-group sections)
+- the current runtime described below still sends one parsed source unit per `generate_note(...)` call
 
 ### Chat flow
 

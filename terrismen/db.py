@@ -414,9 +414,21 @@ def _rebuild_fts_tables(connection: sqlite3.Connection) -> None:
         connection.execute(f"INSERT INTO {table_name}({table_name}) VALUES ('rebuild')")
 
 
+def _migration_0002_add_document_note_batch_size(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        ALTER TABLE settings
+        ADD COLUMN document_note_batch_size INTEGER NOT NULL DEFAULT 5
+        """
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     1: _migration_0001_initial_schema,
+    2: _migration_0002_add_document_note_batch_size,
 }
+
+LATEST_SCHEMA_VERSION = max(MIGRATIONS)
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

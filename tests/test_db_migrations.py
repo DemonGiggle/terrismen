@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from terrismen.db import BASELINE_SCHEMA_VERSION, connect, init_db
+from terrismen.db import BASELINE_SCHEMA_VERSION, LATEST_SCHEMA_VERSION, connect, init_db
 
 
 def get_user_version(database_path: Path) -> int:
@@ -166,16 +166,27 @@ def build_current_shape_database_without_metadata(database_path: Path) -> None:
         connection.close()
 
 
+def build_version_1_database_with_metadata(database_path: Path) -> None:
+    build_current_shape_database_without_metadata(database_path)
+    with connect(database_path) as connection:
+        connection.execute(f"PRAGMA user_version = {BASELINE_SCHEMA_VERSION}")
+        connection.commit()
+
+
 def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     database_path = tmp_path / "fresh.sqlite3"
 
     init_db(database_path)
 
-    assert get_user_version(database_path) == BASELINE_SCHEMA_VERSION
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
     with connect(database_path) as connection:
         settings_count = connection.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
+        document_note_batch_size = connection.execute(
+            "SELECT document_note_batch_size FROM settings WHERE id = 1"
+        ).fetchone()[0]
 
     assert settings_count == 1
+    assert document_note_batch_size == 5
 
 
 def test_init_db_is_idempotent_for_latest_database(tmp_path) -> None:
@@ -184,7 +195,7 @@ def test_init_db_is_idempotent_for_latest_database(tmp_path) -> None:
     init_db(database_path)
     init_db(database_path)
 
-    assert get_user_version(database_path) == BASELINE_SCHEMA_VERSION
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
     with connect(database_path) as connection:
         settings_count = connection.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
 
@@ -197,12 +208,15 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
 
     init_db(database_path)
 
-    assert get_user_version(database_path) == BASELINE_SCHEMA_VERSION
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
     with connect(database_path) as connection:
         rebuilt_hits = connection.execute(
             "SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?",
             ("legacykeyword",),
         ).fetchall()
+        document_note_batch_size = connection.execute(
+            "SELECT document_note_batch_size FROM settings WHERE id = 1"
+        ).fetchone()[0]
         connection.execute(
             """
             INSERT INTO notes (document_id, source_id, note, keywords, created_at)
@@ -218,6 +232,28 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
 
     assert len(rebuilt_hits) == 1
     assert len(trigger_hits) == 1
+    assert document_note_batch_size == 5
+
+
+def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp_path) -> None:
+    database_path = tmp_path / "version1.sqlite3"
+    build_version_1_database_with_metadata(database_path)
+
+    init_db(database_path)
+
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
+    with connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode
+            FROM settings
+            WHERE id = 1
+            """
+        ).fetchone()
+
+    assert row["document_note_batch_size"] == 5
+    assert row["mystery_resolution_batch_size"] == 5
+    assert row["mystery_resolution_reference_mode"] == "notes_only"
 
 
 def test_init_db_rejects_unsupported_legacy_schema(tmp_path) -> None:

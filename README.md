@@ -66,6 +66,8 @@ export TERRISMEN_PORT=8000
 terrismen
 ```
 
+The Settings page shows the current data folder and can move it to a new location. If `TERRISMEN_DATA_ROOT` is set, that environment variable stays authoritative and the UI shows the path as locked.
+
 ## Provider examples
 
 ### OpenAI-compatible

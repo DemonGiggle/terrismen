@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from terrismen.config import AppConfig, load_config
+from terrismen.config import AppConfig, data_root_is_env_controlled, load_config, switch_data_root
 from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
@@ -45,6 +45,13 @@ def get_connection() -> Iterator:
 def serialize_message(row) -> dict[str, object]:
     payload = row_to_dict(row) or {}
     payload["citations"] = payload.pop("citations_json", [])
+    return payload
+
+
+def serialize_settings(row) -> dict[str, object]:
+    payload = row_to_dict(row) or {}
+    payload["data_root"] = config.data_root.as_posix()
+    payload["data_root_locked"] = data_root_is_env_controlled()
     return payload
 
 
@@ -101,28 +108,48 @@ def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
         "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
     ).fetchone()
-    return row_to_dict(row) or {}
+    return serialize_settings(row)
 
 
 @app.put("/api/settings")
 def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_connection)) -> dict[str, object]:
-    connection.execute(
-        """
-        UPDATE settings
-        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
-        WHERE id = 1
-        """,
-        (
-            payload.provider_type,
-            payload.base_url,
-            payload.model,
-            payload.api_key,
-            payload.temperature,
-            payload.llm_timeout_seconds,
-        ),
-    )
-    connection.commit()
-    return get_settings(connection)
+    global config
+
+    try:
+        active_connection = connection
+        replacement_connection = None
+        if Path(payload.data_root).expanduser().resolve() != config.data_root:
+            connection.close()
+            config = switch_data_root(config, payload.data_root)
+            init_db(config.database_path)
+            replacement_connection = connect(config.database_path)
+            active_connection = replacement_connection
+
+        active_connection.execute(
+            """
+            UPDATE settings
+            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
+            WHERE id = 1
+            """,
+            (
+                payload.provider_type,
+                payload.base_url,
+                payload.model,
+                payload.api_key,
+                payload.temperature,
+                payload.llm_timeout_seconds,
+            ),
+        )
+        active_connection.commit()
+        row = active_connection.execute(
+            "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
+        ).fetchone()
+        return serialize_settings(row)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        if replacement_connection is not None:
+            replacement_connection.close()
 
 
 @app.get("/api/documents")

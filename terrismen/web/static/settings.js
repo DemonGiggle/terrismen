@@ -5,6 +5,8 @@ const elements = {
   settingsForm: document.querySelector("#settings-form"),
   settingsSummary: document.querySelector("#settings-summary"),
   settingsIndicator: document.querySelector("#settings-indicator"),
+  dataRootSummary: document.querySelector("#data-root-summary"),
+  dataRootHint: document.querySelector("#data-root-hint"),
 };
 
 function setStatus(text) {
@@ -16,9 +18,15 @@ function renderSettingsSummary(settings) {
   elements.settingsIndicator.textContent = state.label;
   elements.settingsIndicator.className = state.className;
   elements.settingsSummary.textContent = summarizeSettings(settings);
+  elements.dataRootSummary.textContent = `Current data path: ${settings.data_root || "Not configured"}`;
+  elements.dataRootHint.textContent = settings.data_root_locked
+    ? "This path is locked by the TERRISMEN_DATA_ROOT environment variable."
+    : "Changing the data folder moves the current database and uploads to the new location.";
 }
 
 function populateSettingsForm(settings) {
+  elements.settingsForm.data_root.value = settings.data_root || "";
+  elements.settingsForm.data_root.readOnly = Boolean(settings.data_root_locked);
   elements.settingsForm.provider_type.value = settings.provider_type || "openai_compatible";
   elements.settingsForm.base_url.value = settings.base_url || "";
   elements.settingsForm.model.value = settings.model || "";
@@ -41,6 +49,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
     const savedSettings = await api("/api/settings", {
       method: "PUT",
       body: JSON.stringify({
+        data_root: formData.get("data_root"),
         provider_type: formData.get("provider_type"),
         base_url: formData.get("base_url"),
         model: formData.get("model"),

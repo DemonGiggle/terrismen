@@ -1,4 +1,4 @@
-import { api, escapeHtml } from "./shared.js?v=asset-ui-fixes-20260510";
+import { api, escapeHtml, renderMarkdown } from "./shared.js?v=asset-notes-markdown-20260511";
 
 const PAGE_SIZE = 10;
 const documentId = Number(window.location.pathname.match(/\/documents\/(\d+)\/notes/)?.[1]);
@@ -36,7 +36,7 @@ function renderNormalNote(item) {
         <strong>${escapeHtml(item.reference_label)}</strong>
         <span class="tag">Note</span>
       </div>
-      <p>${escapeHtml(item.note).replaceAll("\n", "<br>")}</p>
+      <div class="markdown-content">${renderMarkdown(item.note)}</div>
       ${item.keywords ? `<div class="meta">Keywords: ${escapeHtml(item.keywords)}</div>` : ""}
     </article>
   `;

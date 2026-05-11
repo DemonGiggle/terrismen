@@ -187,7 +187,7 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     assert 'aria-label="Previous page of notes"' in response.text
     assert 'aria-label="Next page of notes"' in response.text
     assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
-    assert '/static/notes.js?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/notes.js?v=asset-notes-markdown-20260511' in response.text
 
 
 def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None:

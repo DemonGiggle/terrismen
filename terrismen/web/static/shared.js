@@ -177,6 +177,7 @@ export function summarizeSettings(settings) {
     settings.base_url,
     settings.api_key ? "API key saved" : "No API key saved",
     `${Math.round(settings.llm_timeout_seconds ?? 600)}s timeout`,
+    `mystery batch ${settings.mystery_resolution_batch_size ?? 5}`,
   ].join(" • ");
 }
 

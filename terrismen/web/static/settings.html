@@ -68,6 +68,11 @@
               LLM timeout (seconds)
               <input name="llm_timeout_seconds" type="number" step="30" min="60" max="3600" value="600">
             </label>
+            <label>
+              Mystery batch size
+              <input name="mystery_resolution_batch_size" type="number" step="1" min="1" max="20" value="5">
+            </label>
+            <p class="meta">Target unresolved mysteries per model call once batch mystery resolution is enabled. Default 5; valid range 1-20.</p>
             <button type="submit">Save settings</button>
           </form>
         </section>

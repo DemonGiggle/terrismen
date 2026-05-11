@@ -24,6 +24,8 @@ INGESTION_STEPS: Final[tuple[str, ...]] = (
     "resolving mysteries",
     "finalizing document",
 )
+DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE = 5
+MAX_MYSTERY_RESOLUTION_BATCH_SIZE = 20
 
 
 def file_extension(name: str) -> str:
@@ -46,6 +48,29 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
         temperature=row["temperature"],
         llm_timeout_seconds=row["llm_timeout_seconds"],
     )
+
+
+def normalize_mystery_resolution_batch_size(value: object) -> int:
+    if isinstance(value, bool):
+        return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
+    if isinstance(value, int):
+        size = value
+    elif isinstance(value, float) and value.is_integer():
+        size = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        size = int(value.strip())
+    else:
+        return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
+    if size < 1 or size > MAX_MYSTERY_RESOLUTION_BATCH_SIZE:
+        return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
+    return size
+
+
+def load_mystery_resolution_batch_size(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT mystery_resolution_batch_size FROM settings WHERE id = 1").fetchone()
+    if row is None:
+        return DEFAULT_MYSTERY_RESOLUTION_BATCH_SIZE
+    return normalize_mystery_resolution_batch_size(row["mystery_resolution_batch_size"])
 
 
 def update_document_progress(

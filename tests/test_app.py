@@ -42,6 +42,7 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert "Data folder" in response.text
     assert "Current data path" in response.text
     assert "LLM timeout (seconds)" in response.text
+    assert "Mystery batch size" in response.text
     assert '/static/styles.css?v=asset-math-render-20260511' in response.text
     assert '/static/settings.js?v=asset-ui-data-root-20260511' in response.text
 
@@ -60,6 +61,7 @@ def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
             "api_key": "",
             "temperature": 0.2,
             "llm_timeout_seconds": 900,
+            "mystery_resolution_batch_size": 7,
         },
     )
 
@@ -68,6 +70,28 @@ def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
     assert payload["data_root"] == str(tmp_path)
     assert payload["data_root_locked"] is True
     assert payload["llm_timeout_seconds"] == 900
+    assert payload["mystery_resolution_batch_size"] == 7
+
+
+def test_settings_api_rejects_invalid_mystery_batch_size(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+
+    response = client.put(
+        "/api/settings",
+        json={
+            "data_root": str(tmp_path),
+            "provider_type": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.2",
+            "api_key": "",
+            "temperature": 0.2,
+            "llm_timeout_seconds": 900,
+            "mystery_resolution_batch_size": 0,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_upload_returns_initial_progress_payload(tmp_path, monkeypatch) -> None:

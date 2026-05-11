@@ -4,7 +4,12 @@ from pathlib import Path
 
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db
-from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion, retry_document_ingestion
+from terrismen.services.ingestion import (
+    continue_document_ingestion,
+    create_document_ingestion,
+    load_mystery_resolution_batch_size,
+    retry_document_ingestion,
+)
 from terrismen.services.notes import GeneratedNote, MysteryResolution
 from terrismen.services.parsers import ParsedSource, ParserError
 
@@ -39,6 +44,27 @@ def configure_provider(connection) -> None:
         ("ollama", "http://localhost:11434", "llama3.2", "", 0.2, 600.0),
     )
     connection.commit()
+
+
+def test_load_mystery_resolution_batch_size_uses_default_valid_and_invalid_values(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    assert load_mystery_resolution_batch_size(connection) == 5
+
+    connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (9,))
+    connection.commit()
+    assert load_mystery_resolution_batch_size(connection) == 9
+
+    connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (0,))
+    connection.commit()
+    assert load_mystery_resolution_batch_size(connection) == 5
+
+    connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (99,))
+    connection.commit()
+    assert load_mystery_resolution_batch_size(connection) == 5
+    connection.close()
 
 
 def test_create_document_ingestion_records_initial_progress(tmp_path: Path) -> None:

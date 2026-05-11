@@ -106,7 +106,11 @@ def health() -> dict[str, str]:
 @app.get("/api/settings")
 def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
-        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
+        """
+        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, mystery_resolution_batch_size
+        FROM settings
+        WHERE id = 1
+        """
     ).fetchone()
     return serialize_settings(row)
 
@@ -128,7 +132,8 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
         active_connection.execute(
             """
             UPDATE settings
-            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
+            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?,
+                mystery_resolution_batch_size = ?
             WHERE id = 1
             """,
             (
@@ -138,11 +143,16 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
                 payload.api_key,
                 payload.temperature,
                 payload.llm_timeout_seconds,
+                payload.mystery_resolution_batch_size,
             ),
         )
         active_connection.commit()
         row = active_connection.execute(
-            "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
+            """
+            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, mystery_resolution_batch_size
+            FROM settings
+            WHERE id = 1
+            """
         ).fetchone()
         return serialize_settings(row)
     except ValueError as exc:

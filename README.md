@@ -92,8 +92,26 @@ terrismen
 
 ## Development
 
+Set up the local development environment:
+
+```bash
+make dev-setup
+```
+
 Run the test suite:
 
 ```bash
-pytest
+make test
+```
+
+If `pytest` on your `PATH` points at a different Python than the project's virtualenv, prefer:
+
+```bash
+./.venv/bin/python -m pytest
+```
+
+Run the app locally:
+
+```bash
+make run
 ```

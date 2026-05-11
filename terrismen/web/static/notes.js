@@ -1,4 +1,4 @@
-import { api, escapeHtml, renderMarkdown } from "./shared.js?v=asset-notes-markdown-20260511";
+import { api, escapeHtml, renderMarkdown, typesetMath } from "./shared.js?v=asset-math-render-20260511";
 
 const PAGE_SIZE = 10;
 const documentId = Number(window.location.pathname.match(/\/documents\/(\d+)\/notes/)?.[1]);
@@ -19,6 +19,12 @@ const elements = {
   next: document.querySelector("#notes-next"),
   pageLabel: document.querySelector("#notes-page-label"),
 };
+
+window.addEventListener("terrismen:math-ready", () => {
+  if (elements.list.childElementCount) {
+    typesetMath(elements.list);
+  }
+});
 
 function renderEmpty(payload) {
   elements.list.innerHTML = `
@@ -73,6 +79,7 @@ function renderPayload(payload) {
   elements.list.innerHTML = payload.items.map((item) => (
     payload.note_type === "mystery" ? renderMysteryNote(item) : renderNormalNote(item)
   )).join("");
+  typesetMath(elements.list);
 }
 
 async function loadNotes() {

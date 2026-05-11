@@ -906,6 +906,17 @@ button:focus-visible,
   overflow-x: auto;
 }
 
+.markdown-content .math-display {
+  overflow-x: auto;
+  padding: 0.35rem 0;
+}
+
+.markdown-content .math-inline {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
 .markdown-content table {
   width: 100%;
   border-collapse: collapse;

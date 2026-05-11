@@ -26,6 +26,8 @@ export function renderPlainText(value) {
   return escapeHtml(value).replace(/\n/g, "<br>");
 }
 
+let pendingMathTypeset = Promise.resolve();
+
 export function renderMarkdown(value) {
   const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
   const blocks = [];
@@ -52,6 +54,13 @@ export function renderMarkdown(value) {
       }
       const language = fenceMatch[1] ? ` data-language="${escapeAttribute(fenceMatch[1])}"` : "";
       blocks.push(`<pre class="code-block"${language}><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    const displayMath = parseDisplayMathBlock(lines, index);
+    if (displayMath) {
+      blocks.push(displayMath.html);
+      index = displayMath.nextIndex;
       continue;
     }
 
@@ -124,6 +133,23 @@ export function renderMarkdown(value) {
   return blocks.join("");
 }
 
+export function typesetMath(root) {
+  if (!root || !window.MathJax?.typesetPromise) {
+    return Promise.resolve();
+  }
+
+  pendingMathTypeset = pendingMathTypeset
+    .then(async () => {
+      if (window.MathJax.typesetClear) {
+        window.MathJax.typesetClear([root]);
+      }
+      await window.MathJax.typesetPromise([root]);
+    })
+    .catch(() => {});
+
+  return pendingMathTypeset;
+}
+
 export function getSettingsState(settings) {
   return isSettingsConfigured(settings)
     ? { isConfigured: true, label: "Configured", className: "tag tag-success is-hidden" }
@@ -170,27 +196,26 @@ function formatProviderType(providerType) {
 
 function renderInlineMarkdown(value) {
   const links = [];
-  let html = replaceMarkdownLinks(escapeHtml(value), links);
+  const codeSpans = [];
+  const mathSpans = [];
+  const codedValue = extractInlineCodeSpans(value, codeSpans);
+  const mathValue = extractInlineMath(codedValue, mathSpans);
+  let html = replaceMarkdownLinks(escapeHtml(mathValue), links, codeSpans, mathSpans);
   html = renderInlineStyles(html);
+  html = restorePlaceholders(html, "CODE", codeSpans);
+  html = restorePlaceholders(html, "MATH", mathSpans);
   return html.replace(/\u0000LINK(\d+)\u0000/g, (_, linkIndex) => links[Number(linkIndex)]);
 }
 
 function renderInlineStyles(value) {
-  const codeSpans = [];
-  const html = value
-    .replace(/`([^`]+)`/g, (_, code) => {
-      codeSpans.push(`<code>${code}</code>`);
-      return `\u0000CODE${codeSpans.length - 1}\u0000`;
-    })
+  return value
     .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([\s\S]+?)\*/g, "<em>$1</em>")
     .replace(/__([\s\S]+?)__/g, "<strong>$1</strong>")
     .replace(/_([\s\S]+?)_/g, "<em>$1</em>");
-
-  return html.replace(/\u0000CODE(\d+)\u0000/g, (_, codeIndex) => codeSpans[Number(codeIndex)]);
 }
 
-function replaceMarkdownLinks(value, links) {
+function replaceMarkdownLinks(value, links, codeSpans, mathSpans) {
   let result = "";
   let index = 0;
 
@@ -217,7 +242,7 @@ function replaceMarkdownLinks(value, links) {
     }
 
     links.push(
-      `<a href="${escapeAttribute(decodedUrl)}" target="_blank" rel="noopener noreferrer">${renderInlineStyles(parsedLink.label)}</a>`,
+      `<a href="${escapeAttribute(decodedUrl)}" target="_blank" rel="noopener noreferrer">${restorePlaceholders(restorePlaceholders(renderInlineStyles(parsedLink.label), "CODE", codeSpans), "MATH", mathSpans)}</a>`,
     );
     result += `\u0000LINK${links.length - 1}\u0000`;
     index = parsedLink.end;
@@ -311,4 +336,105 @@ function renderMarkdownTable(headerCells, bodyRows) {
     .map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`)
     .join("");
   return `<div class="markdown-table-wrap"><table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+}
+
+function parseDisplayMathBlock(lines, startIndex) {
+  const line = lines[startIndex];
+  const singleDollar = line.match(/^\s*\$\$(.+)\$\$\s*$/);
+  if (singleDollar) {
+    return { html: renderDisplayMath(singleDollar[1].trim()), nextIndex: startIndex + 1 };
+  }
+
+  const singleBracket = line.match(/^\s*\\\[(.+)\\\]\s*$/);
+  if (singleBracket) {
+    return { html: renderDisplayMath(singleBracket[1].trim()), nextIndex: startIndex + 1 };
+  }
+
+  if (/^\s*\$\$\s*$/.test(line)) {
+    return parseMultiLineDisplayMath(lines, startIndex, /^\s*\$\$\s*$/);
+  }
+
+  if (/^\s*\\\[\s*$/.test(line)) {
+    return parseMultiLineDisplayMath(lines, startIndex, /^\s*\\\]\s*$/);
+  }
+
+  return null;
+}
+
+function parseMultiLineDisplayMath(lines, startIndex, endPattern) {
+  const contentLines = [];
+  let index = startIndex + 1;
+
+  while (index < lines.length && !endPattern.test(lines[index])) {
+    contentLines.push(lines[index]);
+    index += 1;
+  }
+
+  if (index >= lines.length) {
+    return null;
+  }
+
+  return {
+    html: renderDisplayMath(contentLines.join("\n").trim()),
+    nextIndex: index + 1,
+  };
+}
+
+function renderDisplayMath(value) {
+  return `<div class="math-display">\\[${escapeHtml(value)}\\]</div>`;
+}
+
+function extractInlineCodeSpans(value, codeSpans) {
+  return String(value).replace(/`([^`]+)`/g, (_, code) => {
+    codeSpans.push(`<code>${escapeHtml(code)}</code>`);
+    return `\u0000CODE${codeSpans.length - 1}\u0000`;
+  });
+}
+
+function extractInlineMath(value, mathSpans) {
+  let result = "";
+  let index = 0;
+
+  while (index < value.length) {
+    if (value.startsWith("\\(", index)) {
+      const endIndex = value.indexOf("\\)", index + 2);
+      if (endIndex !== -1) {
+        mathSpans.push(`<span class="math-inline">\\(${escapeHtml(value.slice(index + 2, endIndex))}\\)</span>`);
+        result += `\u0000MATH${mathSpans.length - 1}\u0000`;
+        index = endIndex + 2;
+        continue;
+      }
+    }
+
+    if (value[index] === "$" && value[index - 1] !== "\\" && value[index + 1] !== "$") {
+      const endIndex = findInlineDollarMathEnd(value, index + 1);
+      if (endIndex !== -1) {
+        mathSpans.push(`<span class="math-inline">\\(${escapeHtml(value.slice(index + 1, endIndex))}\\)</span>`);
+        result += `\u0000MATH${mathSpans.length - 1}\u0000`;
+        index = endIndex + 1;
+        continue;
+      }
+    }
+
+    result += value[index];
+    index += 1;
+  }
+
+  return result;
+}
+
+function findInlineDollarMathEnd(value, startIndex) {
+  for (let index = startIndex; index < value.length; index += 1) {
+    if (value[index] === "\n") {
+      return -1;
+    }
+    if (value[index] === "$" && value[index - 1] !== "\\" && value[index + 1] !== "$") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function restorePlaceholders(value, prefix, entries) {
+  return value.replace(new RegExp(`\\u0000${prefix}(\\d+)\\u0000`, "g"), (_, entryIndex) => entries[Number(entryIndex)]);
 }

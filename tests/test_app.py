@@ -26,8 +26,8 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Start Process" in response.text
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
-    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
-    assert '/static/app.js?v=asset-progress-detail-20260511' in response.text
+    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
+    assert '/static/app.js?v=asset-math-render-20260511' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
@@ -42,7 +42,7 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert "Data folder" in response.text
     assert "Current data path" in response.text
     assert "LLM timeout (seconds)" in response.text
-    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
     assert '/static/settings.js?v=asset-ui-data-root-20260511' in response.text
 
 
@@ -186,8 +186,8 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     assert "<main>" in response.text
     assert 'aria-label="Previous page of notes"' in response.text
     assert 'aria-label="Next page of notes"' in response.text
-    assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
-    assert '/static/notes.js?v=asset-notes-markdown-20260511' in response.text
+    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
+    assert '/static/notes.js?v=asset-math-render-20260511' in response.text
 
 
 def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None:

@@ -93,6 +93,18 @@ export function renderMarkdown(value) {
       continue;
     }
 
+    if (isMarkdownTableHeader(line, lines[index + 1])) {
+      const headerCells = splitMarkdownTableRow(line);
+      index += 2;
+      const bodyRows = [];
+      while (index < lines.length && isMarkdownTableRow(lines[index])) {
+        bodyRows.push(splitMarkdownTableRow(lines[index]));
+        index += 1;
+      }
+      blocks.push(renderMarkdownTable(headerCells, bodyRows));
+      continue;
+    }
+
     const paragraphLines = [];
     while (
       index < lines.length &&
@@ -170,10 +182,10 @@ function renderInlineStyles(value) {
       codeSpans.push(`<code>${code}</code>`);
       return `\u0000CODE${codeSpans.length - 1}\u0000`;
     })
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
-    .replace(/_([^_]+)_/g, "<em>$1</em>");
+    .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([\s\S]+?)\*/g, "<em>$1</em>")
+    .replace(/__([\s\S]+?)__/g, "<strong>$1</strong>")
+    .replace(/_([\s\S]+?)_/g, "<em>$1</em>");
 
   return html.replace(/\u0000CODE(\d+)\u0000/g, (_, codeIndex) => codeSpans[Number(codeIndex)]);
 }
@@ -266,4 +278,37 @@ function isSafeUrl(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
+function isMarkdownTableHeader(headerLine, separatorLine) {
+  return isMarkdownTableRow(headerLine) && isMarkdownTableSeparator(separatorLine);
+}
+
+function isMarkdownTableRow(line) {
+  return typeof line === "string" && line.includes("|");
+}
+
+function isMarkdownTableSeparator(line) {
+  if (typeof line !== "string") {
+    return false;
+  }
+  const cells = splitMarkdownTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function splitMarkdownTableRow(line) {
+  return String(line)
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderMarkdownTable(headerCells, bodyRows) {
+  const headerHtml = headerCells.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("");
+  const bodyHtml = bodyRows
+    .map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<div class="markdown-table-wrap"><table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
 }

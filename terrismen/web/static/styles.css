@@ -667,6 +667,31 @@ button:focus-visible,
   color: var(--accent-foreground);
 }
 
+.note-card:hover .markdown-content a,
+.note-card:hover .markdown-content h3,
+.note-card:hover .markdown-content h4,
+.note-card:hover .markdown-content h5,
+.note-card:hover .markdown-content h6,
+.note-card:hover .markdown-content p,
+.note-card:hover .markdown-content li,
+.note-card:hover .markdown-content th,
+.note-card:hover .markdown-content td,
+.note-card:hover .markdown-content .mjx-container {
+  color: inherit;
+}
+
+.note-card:hover .markdown-content code,
+.note-card:hover .markdown-content .code-block,
+.note-card:hover .markdown-content blockquote,
+.note-card:hover .markdown-content th,
+.note-card:hover .markdown-content td {
+  border-color: currentColor;
+}
+
+.note-card:hover .markdown-content table {
+  color: inherit;
+}
+
 .document-card.active {
   background: var(--foreground);
   color: var(--accent-foreground);

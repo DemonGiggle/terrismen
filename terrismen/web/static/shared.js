@@ -64,7 +64,7 @@ export function renderMarkdown(value) {
       continue;
     }
 
-    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1].length + 2;
       blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
@@ -119,7 +119,7 @@ export function renderMarkdown(value) {
       index < lines.length &&
       lines[index].trim() &&
       !lines[index].match(/^```(\w+)?\s*$/) &&
-      !lines[index].match(/^(#{1,3})\s+(.+)$/) &&
+      !lines[index].match(/^(#{1,6})\s+(.+)$/) &&
       !/^>\s?/.test(lines[index]) &&
       !/^\s*[-*]\s+/.test(lines[index]) &&
       !/^\s*\d+[.)]\s+/.test(lines[index])

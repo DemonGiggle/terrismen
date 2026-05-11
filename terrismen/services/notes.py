@@ -444,13 +444,15 @@ def resolve_mystery(
     document_name: str,
     mystery: dict[str, object],
     candidates: list[dict[str, object]],
+    *,
+    include_source_excerpts: bool = True,
 ) -> MysteryResolution:
     request_payload = dict(mystery)
     request_payload.setdefault("id", 1)
     request = build_mystery_resolution_request(document_name, request_payload, candidates)
     response = provider.complete(
         MYSTERY_RESOLUTION_BATCH_PROMPT,
-        build_mystery_resolution_batch_prompt([request], include_source_excerpts=True),
+        build_mystery_resolution_batch_prompt([request], include_source_excerpts=include_source_excerpts),
     ).strip()
     result = parse_mystery_resolution_batch_response(response, [request])[0]
     return MysteryResolution(

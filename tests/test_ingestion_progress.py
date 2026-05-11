@@ -5,9 +5,11 @@ from pathlib import Path
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db
 from terrismen.services.ingestion import (
+    _resolve_document_mysteries,
     continue_document_ingestion,
     create_document_ingestion,
     load_mystery_resolution_batch_size,
+    load_mystery_resolution_reference_mode,
     retry_document_ingestion,
 )
 from terrismen.services.notes import GeneratedNote, MysteryResolution
@@ -15,8 +17,13 @@ from terrismen.services.parsers import ParsedSource, ParserError
 
 
 class FakeProvider:
+    def __init__(self, responses: list[str] | None = None) -> None:
+        self._responses = list(responses or ["{}"])
+        self.calls: list[tuple[str, str, object]] = []
+
     def complete(self, system_prompt: str, user_prompt: str, *, images=None) -> str:
-        return "{}"
+        self.calls.append((system_prompt, user_prompt, images))
+        return self._responses.pop(0)
 
 
 def build_config(tmp_path: Path) -> AppConfig:
@@ -64,6 +71,159 @@ def test_load_mystery_resolution_batch_size_uses_default_valid_and_invalid_value
     connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (99,))
     connection.commit()
     assert load_mystery_resolution_batch_size(connection) == 5
+    connection.close()
+
+
+def test_load_mystery_resolution_reference_mode_uses_default_valid_and_invalid_values(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    assert load_mystery_resolution_reference_mode(connection) == "notes_only"
+
+    connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("notes_and_sources",))
+    connection.commit()
+    assert load_mystery_resolution_reference_mode(connection) == "notes_and_sources"
+
+    connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("bad-value",))
+    connection.commit()
+    assert load_mystery_resolution_reference_mode(connection) == "notes_only"
+    connection.close()
+
+
+def seed_open_mystery(connection, document_id: int) -> tuple[int, int, int]:
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Page 3", 3, "Raw source excerpt that should only appear in notes+sources mode.", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "Later note that clarifies the ranking behavior.", "ranking, clarification"),
+    ).lastrowid
+    mystery_id = connection.execute(
+        """
+        INSERT INTO unresolved_mysteries (
+            document_id, source_id, note_id, question, reason, keywords, status,
+            resolution_summary, resolution_note_id, resolution_source_id, created_at, resolved_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'open', '', NULL, NULL, 'now', NULL)
+        """,
+        (document_id, source_id, note_id, "How are ties resolved?", "The page explains BM25 but not ties.", "ranking, tie"),
+    ).lastrowid
+    connection.commit()
+    return int(source_id), int(note_id), int(mystery_id)
+
+
+def test_resolve_document_mysteries_notes_only_mode_omits_sources_and_requires_note_grounding(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("notes_only",))
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "processing", "resolving mysteries", "", 6, 7, "", "now"),
+    ).lastrowid
+    source_id, note_id, mystery_id = seed_open_mystery(connection, int(document_id))
+    provider = FakeProvider(
+        [
+            f'{{"results":[{{"mystery_id":{mystery_id},"status":"resolved","summary":"Claims a source-only resolution.","note_ids":[],"source_ids":[{source_id}]}}]}}'
+        ]
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion._search_mystery_candidates",
+        lambda connection, document_id, search_text, limit=8: [
+            {
+                "note_id": note_id,
+                "source_id": source_id,
+                "note": "Later note that clarifies the ranking behavior.",
+                "keywords": "ranking, clarification",
+                "content": "Raw source excerpt that should only appear in notes+sources mode.",
+                "locator": "Page 3",
+                "page_number": 3,
+            }
+        ],
+    )
+
+    _resolve_document_mysteries(connection, provider=provider, document_id=int(document_id), document_name="notes.txt")
+
+    mystery_row = connection.execute(
+        "SELECT status, resolution_note_id, resolution_source_id FROM unresolved_mysteries WHERE id = ?",
+        (mystery_id,),
+    ).fetchone()
+    prompt_text = provider.calls[0][1]
+
+    assert mystery_row["status"] == "open"
+    assert mystery_row["resolution_note_id"] is None
+    assert mystery_row["resolution_source_id"] is None
+    assert '"candidate_sources": []' in prompt_text
+    assert "Raw source excerpt that should only appear in notes+sources mode." not in prompt_text
+    connection.close()
+
+
+def test_resolve_document_mysteries_notes_and_sources_mode_persists_source_refs(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("notes_and_sources",))
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "processing", "resolving mysteries", "", 6, 7, "", "now"),
+    ).lastrowid
+    source_id, note_id, mystery_id = seed_open_mystery(connection, int(document_id))
+    provider = FakeProvider(
+        [
+            f'{{"results":[{{"mystery_id":{mystery_id},"status":"resolved","summary":"Resolved directly from the source excerpt.","note_ids":[],"source_ids":[{source_id}]}}]}}'
+        ]
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion._search_mystery_candidates",
+        lambda connection, document_id, search_text, limit=8: [
+            {
+                "note_id": note_id,
+                "source_id": source_id,
+                "note": "Later note that clarifies the ranking behavior.",
+                "keywords": "ranking, clarification",
+                "content": "Raw source excerpt that should only appear in notes+sources mode.",
+                "locator": "Page 3",
+                "page_number": 3,
+            }
+        ],
+    )
+
+    _resolve_document_mysteries(connection, provider=provider, document_id=int(document_id), document_name="notes.txt")
+
+    mystery_row = connection.execute(
+        "SELECT status, resolution_note_id, resolution_source_id FROM unresolved_mysteries WHERE id = ?",
+        (mystery_id,),
+    ).fetchone()
+    ref_rows = connection.execute(
+        "SELECT relation_type, note_id, source_id FROM mystery_refs WHERE mystery_id = ? ORDER BY relation_type, ref_rank",
+        (mystery_id,),
+    ).fetchall()
+    prompt_text = provider.calls[0][1]
+
+    assert mystery_row["status"] == "resolved"
+    assert mystery_row["resolution_note_id"] is None
+    assert mystery_row["resolution_source_id"] == source_id
+    assert [dict(row) for row in ref_rows] == [{"relation_type": "resolution_source", "note_id": None, "source_id": source_id}]
+    assert "Raw source excerpt that should only appear in notes+sources mode." in prompt_text
     connection.close()
 
 
@@ -119,7 +279,7 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
     )
     monkeypatch.setattr(
         "terrismen.services.ingestion.resolve_mystery",
-        lambda provider, document_name, mystery, candidates: MysteryResolution(
+        lambda provider, document_name, mystery, candidates, **kwargs: MysteryResolution(
             status="open",
             summary="Still open",
             note_ids=[],
@@ -434,7 +594,7 @@ def test_continue_document_ingestion_resumes_only_open_mysteries(tmp_path: Path,
     monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
     seen_questions: list[str] = []
 
-    def fake_resolve_mystery(provider, document_name, mystery, candidates):
+    def fake_resolve_mystery(provider, document_name, mystery, candidates, **kwargs):
         seen_questions.append(str(mystery["question"]))
         return MysteryResolution(status="resolved", summary="Now resolved", note_ids=[note_id], source_ids=[source_id])
 

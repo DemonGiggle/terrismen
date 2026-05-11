@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS settings (
     api_key TEXT NOT NULL DEFAULT '',
     temperature REAL NOT NULL DEFAULT 0.2,
     llm_timeout_seconds REAL NOT NULL DEFAULT 600.0,
-    mystery_resolution_batch_size INTEGER NOT NULL DEFAULT 5
+    mystery_resolution_batch_size INTEGER NOT NULL DEFAULT 5,
+    mystery_resolution_reference_mode TEXT NOT NULL DEFAULT 'notes_only'
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -213,13 +214,20 @@ def init_db(database_path: Path) -> None:
         _ensure_column(connection, "documents", "progress_step_count", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "settings", "llm_timeout_seconds", "REAL NOT NULL DEFAULT 600.0")
         _ensure_column(connection, "settings", "mystery_resolution_batch_size", "INTEGER NOT NULL DEFAULT 5")
+        _ensure_column(
+            connection,
+            "settings",
+            "mystery_resolution_reference_mode",
+            "TEXT NOT NULL DEFAULT 'notes_only'",
+        )
         _ensure_column(connection, "chat_requests", "selected_document_ids_json", "TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             """
             INSERT INTO settings (
-                id, provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, mystery_resolution_batch_size
+                id, provider_type, base_url, model, api_key, temperature, llm_timeout_seconds,
+                mystery_resolution_batch_size, mystery_resolution_reference_mode
             )
-            VALUES (1, '', '', '', '', 0.2, 600.0, 5)
+            VALUES (1, '', '', '', '', 0.2, 600.0, 5, 'notes_only')
             ON CONFLICT(id) DO NOTHING
             """
         )

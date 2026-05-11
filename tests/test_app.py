@@ -288,3 +288,47 @@ def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None
     mystery_payload = mystery_response.json()
     assert mystery_payload["total"] == 1
     assert mystery_payload["items"][0]["question"] == "mystery?"
+
+
+def test_document_detail_api_includes_note_for_secondary_source_links(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.pdf", "/tmp/notes.pdf", "application/pdf", "pdf", "ready", "", "now"),
+    ).lastrowid
+    primary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, "Page 1", 1, "primary", "", "{}", "now"),
+    ).lastrowid
+    secondary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, "Page 2", 2, "secondary", "", "{}", "now"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+        (document_id, primary_source_id, "combined note", "combined", "now"),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO note_sources (note_id, source_id, ref_rank) VALUES (?, ?, ?)",
+        (note_id, secondary_source_id, 2),
+    )
+    connection.commit()
+    connection.close()
+
+    response = client.get(f"/api/documents/{document_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    sources_by_id = {item["id"]: item for item in payload["sources"]}
+    assert sources_by_id[secondary_source_id]["note"] == "combined note"

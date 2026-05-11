@@ -107,3 +107,55 @@ def test_search_candidate_notes_respects_document_scope(tmp_path: Path) -> None:
     assert rows
     assert {row["source_id"] for row in rows} == {second_source_id}
     connection.close()
+
+
+def test_search_candidate_notes_returns_secondary_source_links(tmp_path: Path) -> None:
+    database_path = tmp_path / "terrismen.db"
+    init_db(database_path)
+    connection = connect(database_path)
+
+    doc_id = connection.execute(
+        """
+        INSERT INTO documents (original_name, stored_path, media_type, kind, status, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("spec.pdf", "/tmp/spec.pdf", "application/pdf", "pdf", "ready", "", utcnow()),
+    ).lastrowid
+    primary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (doc_id, "Page 2", 2, "Primary source content.", "", "{}", utcnow()),
+    ).lastrowid
+    secondary_source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (doc_id, "Page 3", 3, "Secondary source content.", "", "{}", utcnow()),
+    ).lastrowid
+    note_id = connection.execute(
+        """
+        INSERT INTO notes (document_id, source_id, note, keywords, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            doc_id,
+            primary_source_id,
+            "A batched note that refers to both related pages.\nKeywords: batched, related",
+            "batched, related",
+            utcnow(),
+        ),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO note_sources (note_id, source_id, ref_rank) VALUES (?, ?, ?)",
+        (note_id, secondary_source_id, 2),
+    )
+    connection.commit()
+
+    rows = search_candidate_notes(connection, "related pages")
+
+    assert rows
+    assert {row["source_id"] for row in rows} == {primary_source_id, secondary_source_id}
+    connection.close()

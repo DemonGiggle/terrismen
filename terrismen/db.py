@@ -423,9 +423,62 @@ def _migration_0002_add_document_note_batch_size(connection: sqlite3.Connection)
     )
 
 
+def _create_note_sources_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS note_sources (
+            note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            ref_rank INTEGER NOT NULL,
+            PRIMARY KEY (note_id, source_id),
+            CHECK (ref_rank >= 1)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_note_sources_note_rank ON note_sources(note_id, ref_rank)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_note_sources_source_note ON note_sources(source_id, note_id)"
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS note_sources_notes_ai AFTER INSERT ON notes BEGIN
+            INSERT OR IGNORE INTO note_sources (note_id, source_id, ref_rank)
+            VALUES (new.id, new.source_id, 1);
+        END
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS note_sources_notes_au AFTER UPDATE OF source_id ON notes BEGIN
+            DELETE FROM note_sources
+            WHERE note_id = old.id AND source_id = old.source_id;
+            INSERT OR IGNORE INTO note_sources (note_id, source_id, ref_rank)
+            VALUES (new.id, new.source_id, 1);
+            UPDATE note_sources
+            SET ref_rank = 1
+            WHERE note_id = new.id AND source_id = new.source_id;
+        END
+        """
+    )
+
+
+def _migration_0003_add_note_sources(connection: sqlite3.Connection) -> None:
+    _create_note_sources_schema(connection)
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO note_sources (note_id, source_id, ref_rank)
+        SELECT id, source_id, 1
+        FROM notes
+        """
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     1: _migration_0001_initial_schema,
     2: _migration_0002_add_document_note_batch_size,
+    3: _migration_0003_add_note_sources,
 }
 
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)

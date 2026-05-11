@@ -58,11 +58,12 @@ def _search_note_rows(connection: sqlite3.Connection, question: str, limit: int,
     if fts_query:
         rows = connection.execute(
             f"""
-            SELECT notes.id, notes.note, notes.keywords, notes.source_id, sources.content, sources.locator, sources.page_number,
+            SELECT notes.id, notes.note, notes.keywords, note_sources.source_id, sources.content, sources.locator, sources.page_number,
                    documents.original_name
             FROM notes_fts
             JOIN notes ON notes_fts.rowid = notes.id
-            JOIN sources ON sources.id = notes.source_id
+            JOIN note_sources ON note_sources.note_id = notes.id
+            JOIN sources ON sources.id = note_sources.source_id
             JOIN documents ON documents.id = notes.document_id
             WHERE notes_fts MATCH ?{scope_clause}
             ORDER BY bm25(notes_fts)
@@ -75,10 +76,11 @@ def _search_note_rows(connection: sqlite3.Connection, question: str, limit: int,
     like_pattern = f"%{question[:120]}%"
     rows = connection.execute(
         f"""
-        SELECT notes.id, notes.note, notes.keywords, notes.source_id, sources.content, sources.locator, sources.page_number,
+        SELECT notes.id, notes.note, notes.keywords, note_sources.source_id, sources.content, sources.locator, sources.page_number,
                documents.original_name
         FROM notes
-        JOIN sources ON sources.id = notes.source_id
+        JOIN note_sources ON note_sources.note_id = notes.id
+        JOIN sources ON sources.id = note_sources.source_id
         JOIN documents ON documents.id = notes.document_id
         WHERE (notes.note LIKE ? OR sources.content LIKE ?){scope_clause}
         ORDER BY notes.id DESC
@@ -218,7 +220,8 @@ def _load_sources(connection: sqlite3.Connection, source_ids: list[int], documen
         SELECT sources.id, sources.locator, sources.page_number, sources.content, sources.image_summary,
                notes.note, documents.original_name
         FROM sources
-        JOIN notes ON notes.source_id = sources.id
+        JOIN note_sources ON note_sources.source_id = sources.id
+        JOIN notes ON notes.id = note_sources.note_id
         JOIN documents ON documents.id = sources.document_id
         WHERE sources.id IN ({placeholders}){scope_clause}
         ORDER BY sources.id

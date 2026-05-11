@@ -188,10 +188,12 @@ def _search_mystery_candidates(
     if fts_query:
         rows = connection.execute(
             """
-            SELECT notes.id AS note_id, notes.source_id, notes.note, notes.keywords, sources.content, sources.locator, sources.page_number
+            SELECT notes.id AS note_id, note_sources.source_id, notes.note, notes.keywords,
+                   sources.content, sources.locator, sources.page_number
             FROM notes_fts
             JOIN notes ON notes_fts.rowid = notes.id
-            JOIN sources ON sources.id = notes.source_id
+            JOIN note_sources ON note_sources.note_id = notes.id
+            JOIN sources ON sources.id = note_sources.source_id
             WHERE notes.document_id = ? AND notes_fts MATCH ?
             ORDER BY bm25(notes_fts)
             LIMIT ?
@@ -204,9 +206,11 @@ def _search_mystery_candidates(
     like_pattern = f"%{search_text[:160]}%"
     rows = connection.execute(
         """
-        SELECT notes.id AS note_id, notes.source_id, notes.note, notes.keywords, sources.content, sources.locator, sources.page_number
+        SELECT notes.id AS note_id, note_sources.source_id, notes.note, notes.keywords,
+               sources.content, sources.locator, sources.page_number
         FROM notes
-        JOIN sources ON sources.id = notes.source_id
+        JOIN note_sources ON note_sources.note_id = notes.id
+        JOIN sources ON sources.id = note_sources.source_id
         WHERE notes.document_id = ?
           AND (notes.note LIKE ? OR notes.keywords LIKE ? OR sources.content LIKE ?)
         ORDER BY notes.id DESC
@@ -560,7 +564,8 @@ def _load_existing_source_rows(connection: sqlite3.Connection, document_id: int)
         SELECT sources.id, sources.locator, sources.page_number, sources.image_summary,
                COUNT(notes.id) AS note_count
         FROM sources
-        LEFT JOIN notes ON notes.source_id = sources.id
+        LEFT JOIN note_sources ON note_sources.source_id = sources.id
+        LEFT JOIN notes ON notes.id = note_sources.note_id
         WHERE sources.document_id = ?
         GROUP BY sources.id
         ORDER BY sources.id

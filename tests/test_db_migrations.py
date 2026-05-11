@@ -173,6 +173,19 @@ def build_version_1_database_with_metadata(database_path: Path) -> None:
         connection.commit()
 
 
+def build_version_2_database_with_metadata(database_path: Path) -> None:
+    build_version_1_database_with_metadata(database_path)
+    with connect(database_path) as connection:
+        connection.execute(
+            """
+            ALTER TABLE settings
+            ADD COLUMN document_note_batch_size INTEGER NOT NULL DEFAULT 5
+            """
+        )
+        connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+
+
 def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     database_path = tmp_path / "fresh.sqlite3"
 
@@ -254,6 +267,67 @@ def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp
     assert row["document_note_batch_size"] == 5
     assert row["mystery_resolution_batch_size"] == 5
     assert row["mystery_resolution_reference_mode"] == "notes_only"
+
+
+def test_init_db_migrates_version_2_database_to_add_note_sources_and_backfill(tmp_path) -> None:
+    database_path = tmp_path / "version2.sqlite3"
+    build_version_2_database_with_metadata(database_path)
+
+    init_db(database_path)
+
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
+    with connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT note_id, source_id, ref_rank FROM note_sources ORDER BY note_id, source_id"
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [{"note_id": 1, "source_id": 1, "ref_rank": 1}]
+
+
+def test_init_db_creates_note_sources_triggers_for_new_note_inserts_and_source_updates(tmp_path) -> None:
+    database_path = tmp_path / "note-sources-sync.sqlite3"
+    init_db(database_path)
+
+    with connect(database_path) as connection:
+        document_id = connection.execute(
+            """
+            INSERT INTO documents (
+                original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail,
+                progress_step_index, progress_step_count, error, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "ready", "", "", 0, 0, "", "now"),
+        ).lastrowid
+        source_id = connection.execute(
+            """
+            INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (document_id, "Chunk 1", 1, "alpha", "", "{}", "now"),
+        ).lastrowid
+        replacement_source_id = connection.execute(
+            """
+            INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (document_id, "Chunk 2", 2, "beta", "", "{}", "now"),
+        ).lastrowid
+        note_id = connection.execute(
+            """
+            INSERT INTO notes (document_id, source_id, note, keywords, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (document_id, source_id, "note body", "keywords", "now"),
+        ).lastrowid
+        connection.execute("UPDATE notes SET source_id = ? WHERE id = ?", (replacement_source_id, note_id))
+        connection.commit()
+        rows = connection.execute(
+            "SELECT note_id, source_id, ref_rank FROM note_sources WHERE note_id = ? ORDER BY ref_rank, source_id",
+            (note_id,),
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [{"note_id": note_id, "source_id": replacement_source_id, "ref_rank": 1}]
 
 
 def test_init_db_rejects_unsupported_legacy_schema(tmp_path) -> None:

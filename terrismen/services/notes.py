@@ -30,6 +30,34 @@ class MysteryResolution:
     source_ids: list[int]
 
 
+@dataclass(slots=True)
+class MysteryResolutionCandidate:
+    note_id: int
+    source_id: int
+    reference_label: str
+    note: str
+    source_excerpt: str
+
+
+@dataclass(slots=True)
+class MysteryResolutionRequest:
+    mystery_id: int
+    reference_label: str
+    question: str
+    reason: str
+    keywords: str
+    candidates: list[MysteryResolutionCandidate]
+
+
+@dataclass(slots=True)
+class MysteryBatchResolution:
+    mystery_id: int
+    status: str
+    summary: str
+    note_ids: list[int]
+    source_ids: list[int]
+
+
 NOTE_SYSTEM_PROMPT = """You create dense study notes from source material.
 
 Requirements:
@@ -55,22 +83,41 @@ Requirements:
 IMAGE_PROMPT = """Describe this image in a way that helps document note taking.
 Focus on labels, diagrams, tables, captions, relationships, and anything that changes the meaning of the surrounding text."""
 
-MYSTERY_RESOLUTION_PROMPT = """You review unresolved document questions after the full document has been read.
+MYSTERY_RESOLUTION_BATCH_PROMPT = """You review unresolved document questions after the full document has been read.
 
-Return JSON only in this shape:
+Return JSON only in this exact shape:
 {
-  "status": "resolved" or "open",
-  "summary": "concise explanation grounded in the provided material",
-  "note_ids": [1, 2],
-  "source_ids": [3, 4]
+  "results": [
+    {
+      "mystery_id": 101,
+      "status": "resolved" or "open",
+      "summary": "concise explanation grounded in the provided material",
+      "note_ids": [11, 14],
+      "source_ids": [21]
+    }
+  ]
 }
 
 Rules:
-- Use only the candidate notes and source excerpts provided.
-- Mark the mystery as resolved only when the provided evidence clearly answers it.
+- Use only the candidate notes and candidate source excerpts provided for each mystery.
+- Never invent or rename mystery ids, note ids, or source ids.
+- Reference candidate IDs exactly as given for the matching mystery.
+- Mark a mystery as resolved only when the provided evidence clearly answers it.
 - If the evidence is weak or still incomplete, keep it open and explain what is still missing.
-- Reference candidate IDs exactly as given.
+- Each mystery_id must appear at most once in results.
+- Return JSON only, with no markdown fences or extra prose.
 """
+
+MYSTERY_RESOLUTION_NOTE_CHAR_LIMIT = 1200
+MYSTERY_RESOLUTION_SOURCE_CHAR_LIMIT = 1200
+MYSTERY_BATCH_INVALID_SUMMARY = (
+    "The model returned an invalid batch response, so this mystery remains open until it can be reviewed again."
+)
+MYSTERY_ITEM_INVALID_SUMMARY = (
+    "The model returned an invalid result for this mystery, so it remains open until it can be reviewed again."
+)
+MYSTERY_OPEN_DEFAULT_SUMMARY = "The provided reference material still does not clearly resolve this mystery."
+MYSTERY_RESOLVED_DEFAULT_SUMMARY = "This mystery was resolved from the provided reference material."
 
 
 def build_reference_label(document_name: str, locator: str, page_number: int | None) -> str:
@@ -92,32 +139,33 @@ def describe_images(provider: BaseProvider, source: ParsedSource) -> list[str]:
     return descriptions
 
 
+def _decode_json_object(text: str) -> dict[str, object]:
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _extract_json_object(text: str) -> dict[str, object]:
     stripped = text.strip()
     if not stripped:
         return {}
-    try:
-        payload = json.loads(stripped)
-        return payload if isinstance(payload, dict) else {}
-    except json.JSONDecodeError:
-        pass
+    payload = _decode_json_object(stripped)
+    if payload:
+        return payload
 
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", stripped, re.DOTALL)
     if fenced:
-        try:
-            payload = json.loads(fenced.group(1))
-            return payload if isinstance(payload, dict) else {}
-        except json.JSONDecodeError:
-            pass
+        payload = _decode_json_object(fenced.group(1))
+        if payload:
+            return payload
 
-    inline = re.search(r"\{.*\}", stripped, re.DOTALL)
-    if not inline:
-        return {}
-    try:
-        payload = json.loads(inline.group(0))
-        return payload if isinstance(payload, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+    for match in re.finditer(r"\{", stripped):
+        payload = _decode_json_object(stripped[match.start() :])
+        if payload:
+            return payload
+    return {}
 
 
 def _normalize_string_list(value: object) -> list[str]:
@@ -135,9 +183,20 @@ def _normalize_int_list(value: object) -> list[int]:
         return []
     resolved: list[int] = []
     for item in value:
-        if isinstance(item, int):
-            resolved.append(item)
+        normalized = _normalize_optional_int(item)
+        if normalized is not None:
+            resolved.append(normalized)
     return resolved
+
+
+def _normalize_optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 def _format_note_text(note_body: str, keywords: list[str]) -> str:
@@ -161,6 +220,192 @@ def _parse_mysteries(value: object) -> list[MysteryDraft]:
         keywords = ", ".join(_normalize_string_list(item.get("keywords", [])))
         mysteries.append(MysteryDraft(question=question, reason=reason, keywords=keywords))
     return mysteries
+
+
+def _trim_prompt_text(value: str, limit: int) -> str:
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def build_mystery_resolution_request(
+    document_name: str,
+    mystery: dict[str, object],
+    candidates: list[dict[str, object]],
+) -> MysteryResolutionRequest:
+    reference_label = build_reference_label(
+        document_name,
+        str(mystery.get("origin_locator") or mystery.get("locator") or "Unknown reference"),
+        mystery.get("origin_page_number") if isinstance(mystery.get("origin_page_number"), int) else None,
+    )
+    normalized_candidates: list[MysteryResolutionCandidate] = []
+    for candidate in candidates:
+        note_id = _normalize_optional_int(candidate.get("note_id"))
+        source_id = _normalize_optional_int(candidate.get("source_id"))
+        if note_id is None or source_id is None:
+            continue
+        candidate_reference = build_reference_label(
+            document_name,
+            str(candidate["locator"]),
+            candidate["page_number"] if isinstance(candidate["page_number"], int) else None,
+        )
+        normalized_candidates.append(
+            MysteryResolutionCandidate(
+                note_id=note_id,
+                source_id=source_id,
+                reference_label=candidate_reference,
+                note=str(candidate.get("note", "")),
+                source_excerpt=str(candidate.get("content", "")),
+            )
+        )
+    mystery_id = _normalize_optional_int(mystery.get("id"))
+    if mystery_id is None:
+        raise ValueError("Mystery id is required for batch resolution.")
+    return MysteryResolutionRequest(
+        mystery_id=mystery_id,
+        reference_label=reference_label,
+        question=str(mystery.get("question", "")).strip(),
+        reason=str(mystery.get("reason", "")).strip(),
+        keywords=str(mystery.get("keywords", "")).strip(),
+        candidates=normalized_candidates,
+    )
+
+
+def build_mystery_resolution_batch_prompt(
+    requests: list[MysteryResolutionRequest],
+    *,
+    include_source_excerpts: bool = True,
+) -> str:
+    mysteries_payload: list[dict[str, object]] = []
+    for request in requests:
+        candidate_notes = []
+        candidate_sources_by_id: dict[int, dict[str, object]] = {}
+        for candidate in request.candidates:
+            candidate_notes.append(
+                {
+                    "note_id": candidate.note_id,
+                    "source_id": candidate.source_id,
+                    "reference": candidate.reference_label,
+                    "note": _trim_prompt_text(candidate.note, MYSTERY_RESOLUTION_NOTE_CHAR_LIMIT),
+                }
+            )
+            if include_source_excerpts and candidate.source_id not in candidate_sources_by_id:
+                candidate_sources_by_id[candidate.source_id] = {
+                    "source_id": candidate.source_id,
+                    "reference": candidate.reference_label,
+                    "excerpt": _trim_prompt_text(
+                        candidate.source_excerpt,
+                        MYSTERY_RESOLUTION_SOURCE_CHAR_LIMIT,
+                    ),
+                }
+        mysteries_payload.append(
+            {
+                "mystery_id": request.mystery_id,
+                "reference": request.reference_label,
+                "question": request.question,
+                "reason": request.reason or "[no reason recorded]",
+                "keywords": _normalize_string_list(request.keywords),
+                "candidate_notes": candidate_notes,
+                "candidate_sources": list(candidate_sources_by_id.values()) if include_source_excerpts else [],
+            }
+        )
+    return (
+        "Review each mystery independently and return one result per mystery_id.\n\n"
+        "Batch input:\n"
+        + json.dumps({"mysteries": mysteries_payload}, indent=2)
+    )
+
+
+def _default_summary_for_status(status: str) -> str:
+    return MYSTERY_RESOLVED_DEFAULT_SUMMARY if status == "resolved" else MYSTERY_OPEN_DEFAULT_SUMMARY
+
+
+def _fallback_batch_results(
+    requests: list[MysteryResolutionRequest],
+    summary: str,
+) -> list[MysteryBatchResolution]:
+    return [
+        MysteryBatchResolution(
+            mystery_id=request.mystery_id,
+            status="open",
+            summary=summary,
+            note_ids=[],
+            source_ids=[],
+        )
+        for request in requests
+    ]
+
+
+def _parse_batch_result_item(
+    item: dict[str, object],
+    request: MysteryResolutionRequest,
+) -> MysteryBatchResolution | None:
+    status = str(item.get("status", "")).strip().lower()
+    if status not in {"resolved", "open"}:
+        return None
+    note_ids = _normalize_int_list(item.get("note_ids", []))
+    source_ids = _normalize_int_list(item.get("source_ids", []))
+    allowed_note_ids = {candidate.note_id for candidate in request.candidates}
+    allowed_source_ids = {candidate.source_id for candidate in request.candidates}
+    if any(note_id not in allowed_note_ids for note_id in note_ids):
+        return None
+    if any(source_id not in allowed_source_ids for source_id in source_ids):
+        return None
+    summary = str(item.get("summary", "")).strip() or _default_summary_for_status(status)
+    return MysteryBatchResolution(
+        mystery_id=request.mystery_id,
+        status=status,
+        summary=summary,
+        note_ids=list(dict.fromkeys(note_ids)),
+        source_ids=list(dict.fromkeys(source_ids)),
+    )
+
+
+def parse_mystery_resolution_batch_response(
+    response: str,
+    requests: list[MysteryResolutionRequest],
+) -> list[MysteryBatchResolution]:
+    payload = _extract_json_object(response)
+    results_payload = payload.get("results")
+    if not isinstance(results_payload, list):
+        return _fallback_batch_results(requests, MYSTERY_BATCH_INVALID_SUMMARY)
+
+    request_by_id = {request.mystery_id: request for request in requests}
+    parsed_by_id: dict[int, MysteryBatchResolution] = {}
+    for item in results_payload:
+        if not isinstance(item, dict):
+            continue
+        mystery_id = _normalize_optional_int(item.get("mystery_id"))
+        if mystery_id is None or mystery_id not in request_by_id or mystery_id in parsed_by_id:
+            continue
+        parsed = _parse_batch_result_item(item, request_by_id[mystery_id])
+        if parsed is None:
+            parsed_by_id[mystery_id] = MysteryBatchResolution(
+                mystery_id=mystery_id,
+                status="open",
+                summary=MYSTERY_ITEM_INVALID_SUMMARY,
+                note_ids=[],
+                source_ids=[],
+            )
+            continue
+        parsed_by_id[mystery_id] = parsed
+
+    results: list[MysteryBatchResolution] = []
+    for request in requests:
+        results.append(
+            parsed_by_id.get(
+                request.mystery_id,
+                MysteryBatchResolution(
+                    mystery_id=request.mystery_id,
+                    status="open",
+                    summary=MYSTERY_ITEM_INVALID_SUMMARY,
+                    note_ids=[],
+                    source_ids=[],
+                ),
+            )
+        )
+    return results
 
 
 def generate_note(
@@ -200,44 +445,35 @@ def resolve_mystery(
     mystery: dict[str, object],
     candidates: list[dict[str, object]],
 ) -> MysteryResolution:
-    reference_label = build_reference_label(
-        document_name,
-        str(mystery.get("origin_locator") or mystery.get("locator") or "Unknown reference"),
-        mystery.get("origin_page_number") if isinstance(mystery.get("origin_page_number"), int) else None,
-    )
-    candidate_lines = []
-    for candidate in candidates:
-        candidate_reference = build_reference_label(
-            document_name,
-            str(candidate["locator"]),
-            candidate["page_number"] if isinstance(candidate["page_number"], int) else None,
-        )
-        candidate_lines.append(
-            f"note_id={candidate['note_id']} | source_id={candidate['source_id']} | reference={candidate_reference}\n"
-            f"Note:\n{candidate['note']}\n\nSource excerpt:\n{candidate['content']}"
-        )
-
+    request_payload = dict(mystery)
+    request_payload.setdefault("id", 1)
+    request = build_mystery_resolution_request(document_name, request_payload, candidates)
     response = provider.complete(
-        MYSTERY_RESOLUTION_PROMPT,
-        (
-            f"Original mystery reference: {reference_label}\n"
-            f"Mystery question: {mystery['question']}\n"
-            f"Why it was uncertain: {mystery.get('reason', '') or '[no reason recorded]'}\n"
-            f"Keywords: {mystery.get('keywords', '') or '[none]'}\n\n"
-            f"Candidate material:\n\n" + "\n\n---\n\n".join(candidate_lines)
-        ),
+        MYSTERY_RESOLUTION_BATCH_PROMPT,
+        build_mystery_resolution_batch_prompt([request], include_source_excerpts=True),
     ).strip()
-    payload = _extract_json_object(response)
-    status = str(payload.get("status", "open")).strip().lower()
-    if status not in {"resolved", "open"}:
-        status = "open"
-    summary = str(payload.get("summary", "")).strip() or response
+    result = parse_mystery_resolution_batch_response(response, [request])[0]
     return MysteryResolution(
-        status=status,
-        summary=summary,
-        note_ids=_normalize_int_list(payload.get("note_ids", [])),
-        source_ids=_normalize_int_list(payload.get("source_ids", [])),
+        status=result.status,
+        summary=result.summary,
+        note_ids=result.note_ids,
+        source_ids=result.source_ids,
     )
+
+
+def resolve_mysteries(
+    provider: BaseProvider,
+    requests: list[MysteryResolutionRequest],
+    *,
+    include_source_excerpts: bool = True,
+) -> list[MysteryBatchResolution]:
+    if not requests:
+        return []
+    response = provider.complete(
+        MYSTERY_RESOLUTION_BATCH_PROMPT,
+        build_mystery_resolution_batch_prompt(requests, include_source_excerpts=include_source_excerpts),
+    ).strip()
+    return parse_mystery_resolution_batch_response(response, requests)
 
 
 def extract_keywords(note_text: str) -> str:

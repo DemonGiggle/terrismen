@@ -39,6 +39,18 @@ function stripTrailingKeywordsLine(note) {
   return String(note || "").replace(/\n+Keywords:\s*[^\n]+?\s*$/i, "").trimEnd();
 }
 
+function renderReferenceTags(references) {
+  if (!Array.isArray(references) || references.length < 2) {
+    return "";
+  }
+  return `
+    <div class="meta">
+      References:
+      ${references.map((reference) => `<span class="tag">${escapeHtml(reference.reference_label)}</span>`).join(" ")}
+    </div>
+  `;
+}
+
 function renderNormalNote(item) {
   return `
     <article class="note-card">
@@ -46,6 +58,7 @@ function renderNormalNote(item) {
         <strong>${escapeHtml(item.reference_label)}</strong>
         <span class="tag">Note</span>
       </div>
+      ${renderReferenceTags(item.references)}
       <div class="markdown-content">${renderMarkdown(stripTrailingKeywordsLine(item.note))}</div>
       ${item.keywords ? `<div class="meta">Keywords: ${escapeHtml(item.keywords)}</div>` : ""}
     </article>

@@ -85,6 +85,44 @@ def serialize_mystery_refs(connection, mystery_ids: list[int], document_name: st
     return grouped
 
 
+def serialize_note_refs(connection, note_ids: list[int], document_name: str) -> dict[int, list[dict[str, object]]]:
+    if not note_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in note_ids)
+    rows = connection.execute(
+        f"""
+        SELECT note_sources.note_id, note_sources.source_id, note_sources.ref_rank, sources.locator, sources.page_number
+        FROM note_sources
+        JOIN sources ON sources.id = note_sources.source_id
+        WHERE note_sources.note_id IN ({placeholders})
+        ORDER BY note_sources.note_id, note_sources.ref_rank, note_sources.source_id
+        """,
+        note_ids,
+    ).fetchall()
+    grouped: dict[int, list[dict[str, object]]] = {}
+    for row in rows:
+        item = dict(row)
+        item["reference_label"] = build_reference_label(document_name, item["locator"], item["page_number"])
+        grouped.setdefault(int(item["note_id"]), []).append(item)
+    return grouped
+
+
+def summarize_note_refs(document_name: str, references: list[dict[str, object]]) -> str:
+    if not references:
+        return f"{document_name} - Unknown reference"
+    if len(references) == 1:
+        return str(references[0]["reference_label"])
+    if all(
+        isinstance(item.get("page_number"), int) and str(item.get("locator", "")).startswith("Page ")
+        for item in references
+    ):
+        page_numbers = sorted({int(item["page_number"]) for item in references})
+        if page_numbers == list(range(page_numbers[0], page_numbers[-1] + 1)):
+            return f"{document_name} - Pages {page_numbers[0]}-{page_numbers[-1]}"
+        return f"{document_name} - Pages {', '.join(str(page_number) for page_number in page_numbers)}"
+    return f"{document_name} - {len(references)} source units"
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "web" / "static" / "index.html")
@@ -284,7 +322,12 @@ def list_document_notes(
             items.append(item)
     else:
         total = connection.execute(
-            "SELECT COUNT(*) FROM notes WHERE document_id = ?",
+            """
+            SELECT COUNT(*)
+            FROM notes
+            JOIN note_sources ON note_sources.note_id = notes.id AND note_sources.ref_rank = 1
+            WHERE notes.document_id = ?
+            """,
             (document_id,),
         ).fetchone()[0]
         rows = connection.execute(
@@ -299,10 +342,12 @@ def list_document_notes(
             """,
             (document_id, page_size, offset),
         ).fetchall()
+        note_refs = serialize_note_refs(connection, [int(row["id"]) for row in rows], document["original_name"])
         items = []
         for row in rows:
             item = row_to_dict(row) or {}
-            item["reference_label"] = build_reference_label(document["original_name"], item["locator"], item["page_number"])
+            item["references"] = note_refs.get(int(item["id"]), [])
+            item["reference_label"] = summarize_note_refs(document["original_name"], item["references"])
             items.append(item)
 
     return {

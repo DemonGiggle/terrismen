@@ -133,3 +133,11 @@ Run the app locally:
 ```bash
 make run
 ```
+
+### Database schema changes
+
+`terrismen` applies SQLite schema migrations automatically through `init_db(...)` at startup and in tests.
+
+- Future schema changes should be added as new numbered migrations in `terrismen/db.py`.
+- The current schema is the supported baseline for databases created before migration metadata existed.
+- Older schema shapes outside that baseline are not upgraded automatically and should be migrated manually before startup.

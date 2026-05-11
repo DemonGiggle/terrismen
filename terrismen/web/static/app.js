@@ -62,6 +62,10 @@ function describeDocumentProgress(documentItem) {
   return `${prefix} ${documentItem.progress_step_index}/${documentItem.progress_step_count}: ${documentItem.progress_step_name}`;
 }
 
+function describeDocumentProgressDetail(documentItem) {
+  return documentItem.progress_detail || "";
+}
+
 function renderDocuments() {
   renderChatScope();
   if (!state.documents.length) {
@@ -75,6 +79,7 @@ function renderDocuments() {
     .map((documentItem) => {
       const active = documentItem.id === state.selectedDocumentId ? " active" : "";
       const progress = describeDocumentProgress(documentItem);
+      const progressDetail = describeDocumentProgressDetail(documentItem);
       const isReady = isDocumentReady(documentItem);
       const isUsedForChat = isReady && state.checkedDocumentIds.has(documentItem.id);
       return `
@@ -93,6 +98,7 @@ function renderDocuments() {
                 <strong>${escapeHtml(documentItem.original_name)}</strong>
               </span>
               ${progress ? `<span class="meta">${escapeHtml(progress)}</span>` : ""}
+              ${progressDetail ? `<span class="meta">${escapeHtml(progressDetail)}</span>` : ""}
               <span class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</span>
               ${documentItem.error ? `<span class="meta">${escapeHtml(documentItem.error)}</span>` : ""}
             </span>

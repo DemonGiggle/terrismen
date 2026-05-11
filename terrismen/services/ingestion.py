@@ -48,15 +48,28 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
     )
 
 
-def update_document_progress(connection: sqlite3.Connection, document_id: int, step_name: str) -> None:
+def update_document_progress(
+    connection: sqlite3.Connection,
+    document_id: int,
+    step_name: str,
+    detail: str = "",
+) -> None:
     connection.execute(
         """
         UPDATE documents
-        SET progress_step_name = ?, progress_step_index = ?, progress_step_count = ?
+        SET progress_step_name = ?, progress_detail = ?, progress_step_index = ?, progress_step_count = ?
         WHERE id = ?
         """,
-        (step_name, INGESTION_STEPS.index(step_name) + 1, len(INGESTION_STEPS), document_id),
+        (step_name, detail, INGESTION_STEPS.index(step_name) + 1, len(INGESTION_STEPS), document_id),
     )
+
+
+def _format_progress_detail(current: int, total: int, noun: str) -> str:
+    return f"Processing {current}/{total} {noun}"
+
+
+def _source_progress_noun(kind: str) -> str:
+    return "pages" if kind == "pdf" else "sections"
 
 
 def _delete_document_outputs(connection: sqlite3.Connection, document_id: int) -> None:
@@ -193,7 +206,20 @@ def _resolve_document_mysteries(
         (document_id,),
     ).fetchall()
 
-    for mystery_row in mysteries:
+    total_mysteries = len(mysteries)
+    if total_mysteries == 0:
+        update_document_progress(connection, document_id, "resolving mysteries", "Processing 0/0 mysteries")
+        connection.commit()
+        return
+
+    for mystery_index, mystery_row in enumerate(mysteries, start=1):
+        update_document_progress(
+            connection,
+            document_id,
+            "resolving mysteries",
+            _format_progress_detail(mystery_index, total_mysteries, "mysteries"),
+        )
+        connection.commit()
         mystery = dict(mystery_row)
         search_text = " ".join(
             item for item in [mystery["question"], mystery["reason"], mystery["keywords"]] if item
@@ -280,9 +306,9 @@ def create_document_ingestion(
         """
         INSERT INTO documents (
             original_name, stored_path, media_type, kind, status,
-            progress_step_name, progress_step_index, progress_step_count, error, created_at
+            progress_step_name, progress_detail, progress_step_index, progress_step_count, error, created_at
         )
-        VALUES (?, ?, ?, '', 'processing', ?, ?, ?, '', ?)
+        VALUES (?, ?, ?, '', 'processing', ?, '', ?, ?, '', ?)
         """,
         (
             original_name,
@@ -336,7 +362,7 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
 
     document = connection.execute(
         """
-        SELECT id, original_name, kind, status, progress_step_name, progress_step_index, progress_step_count,
+        SELECT id, original_name, kind, status, progress_step_name, progress_detail, progress_step_index, progress_step_count,
                error, created_at,
                (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
@@ -371,13 +397,18 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
             update_document_progress(connection, document_id, "parsing document")
             connection.commit()
             kind, parsed_sources = parse_document(stored_path, config.images_dir)
-            update_document_progress(connection, document_id, "describing images")
-            connection.commit()
             connection.execute("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
-            update_document_progress(connection, document_id, "generating notes")
+            total_sources = len(parsed_sources)
+            progress_noun = _source_progress_noun(kind)
+            update_document_progress(
+                connection,
+                document_id,
+                "generating notes",
+                _format_progress_detail(0, total_sources, progress_noun),
+            )
             connection.commit()
 
-            for source in parsed_sources:
+            for source_index, source in enumerate(parsed_sources, start=1):
                 source_cursor = connection.execute(
                     """
                     INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
@@ -393,7 +424,24 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     ),
                 )
                 source_id = int(source_cursor.lastrowid)
-                image_descriptions = describe_images(provider, source) if source.images else []
+                if source.images:
+                    update_document_progress(
+                        connection,
+                        document_id,
+                        "describing images",
+                        _format_progress_detail(source_index, total_sources, progress_noun),
+                    )
+                    connection.commit()
+                    image_descriptions = describe_images(provider, source)
+                else:
+                    image_descriptions = []
+                update_document_progress(
+                    connection,
+                    document_id,
+                    "generating notes",
+                    _format_progress_detail(source_index, total_sources, progress_noun),
+                )
+                connection.commit()
                 for (image_path, image), description in zip(source.images, image_descriptions, strict=False):
                     connection.execute(
                         """
@@ -424,14 +472,24 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                         note_id=note_id,
                         draft=mystery,
                     )
+                connection.commit()
 
-            update_document_progress(connection, document_id, "resolving mysteries")
+            mystery_count = connection.execute(
+                "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()[0]
+            update_document_progress(
+                connection,
+                document_id,
+                "resolving mysteries",
+                _format_progress_detail(0, mystery_count, "mysteries"),
+            )
             connection.commit()
 
         _resolve_document_mysteries(connection, provider=provider, document_id=document_id, document_name=original_name)
         update_document_progress(connection, document_id, "finalizing document")
         connection.execute(
-            "UPDATE documents SET status = 'ready', error = '', progress_step_name = ?, progress_step_index = ?, progress_step_count = ? WHERE id = ?",
+            "UPDATE documents SET status = 'ready', error = '', progress_step_name = ?, progress_detail = '', progress_step_index = ?, progress_step_count = ? WHERE id = ?",
             ("finalizing document", len(INGESTION_STEPS), len(INGESTION_STEPS), document_id),
         )
         connection.commit()

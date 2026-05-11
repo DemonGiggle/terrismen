@@ -56,12 +56,13 @@ def test_create_document_ingestion_records_initial_progress(tmp_path: Path) -> N
     )
 
     row = connection.execute(
-        "SELECT status, progress_step_name, progress_step_index, progress_step_count FROM documents WHERE id = ?",
+        "SELECT status, progress_step_name, progress_detail, progress_step_index, progress_step_count FROM documents WHERE id = ?",
         (document_id,),
     ).fetchone()
 
     assert row["status"] == "processing"
     assert row["progress_step_name"] == "parsing document"
+    assert row["progress_detail"] == ""
     assert row["progress_step_index"] == 3
     assert row["progress_step_count"] == 7
     connection.close()
@@ -105,7 +106,7 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
     check_connection = connect(config.database_path)
     row = check_connection.execute(
         """
-        SELECT status, kind, progress_step_name, progress_step_index, progress_step_count,
+        SELECT status, kind, progress_step_name, progress_detail, progress_step_index, progress_step_count,
                (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
         FROM documents
         WHERE id = ?
@@ -116,6 +117,7 @@ def test_continue_document_ingestion_updates_final_progress(tmp_path: Path, monk
     assert row["status"] == "ready"
     assert row["kind"] == "text"
     assert row["progress_step_name"] == "finalizing document"
+    assert row["progress_detail"] == ""
     assert row["progress_step_index"] == 7
     assert row["progress_step_count"] == 7
     assert row["note_count"] == 1
@@ -165,7 +167,10 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
         media_type="text/plain",
         blob=b"alpha\nbeta\n",
     )
-    connection.execute("UPDATE documents SET status = 'failed', progress_step_name = ?, progress_step_index = ?, error = ? WHERE id = ?", ("generating notes", 5, "provider failed", document_id))
+    connection.execute(
+        "UPDATE documents SET status = 'failed', progress_step_name = ?, progress_detail = ?, progress_step_index = ?, error = ? WHERE id = ?",
+        ("generating notes", "Processing 1/3 pages", 5, "provider failed", document_id),
+    )
     source_id = connection.execute(
         """
         INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
@@ -190,7 +195,7 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
 
     row = connection.execute(
         """
-        SELECT status, error, kind, progress_step_name,
+        SELECT status, error, kind, progress_step_name, progress_detail,
                (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = documents.id) AS mystery_count
@@ -205,6 +210,7 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
     assert row["error"] == ""
     assert row["kind"] == ""
     assert row["progress_step_name"] == "parsing document"
+    assert row["progress_detail"] == ""
     assert row["source_count"] == 0
     assert row["note_count"] == 0
     assert row["mystery_count"] == 0
@@ -224,8 +230,8 @@ def test_retry_document_ingestion_reuses_existing_outputs_for_mystery_stage(tmp_
         blob=b"alpha\nbeta\n",
     )
     connection.execute(
-        "UPDATE documents SET kind = ?, status = 'failed', progress_step_name = ?, progress_step_index = ?, error = ? WHERE id = ?",
-        ("text", "resolving mysteries", 6, "resolution failed", document_id),
+        "UPDATE documents SET kind = ?, status = 'failed', progress_step_name = ?, progress_detail = ?, progress_step_index = ?, error = ? WHERE id = ?",
+        ("text", "resolving mysteries", "Processing 1/4 mysteries", 6, "resolution failed", document_id),
     )
     source_id = connection.execute(
         """
@@ -261,7 +267,7 @@ def test_retry_document_ingestion_reuses_existing_outputs_for_mystery_stage(tmp_
 
     row = connection.execute(
         """
-        SELECT status, error, kind, progress_step_name,
+        SELECT status, error, kind, progress_step_name, progress_detail,
                (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
         FROM documents
@@ -284,6 +290,7 @@ def test_retry_document_ingestion_reuses_existing_outputs_for_mystery_stage(tmp_
     assert row["error"] == ""
     assert row["kind"] == "text"
     assert row["progress_step_name"] == "resolving mysteries"
+    assert row["progress_detail"] == ""
     assert row["source_count"] == 1
     assert row["note_count"] == 1
     assert mystery_row["status"] == "open"

@@ -157,7 +157,7 @@ def list_documents(connection=Depends(get_connection)) -> list[dict[str, object]
     rows = connection.execute(
         """
         SELECT documents.id, documents.original_name, documents.kind, documents.status,
-               documents.progress_step_name, documents.progress_step_index, documents.progress_step_count,
+               documents.progress_step_name, documents.progress_detail, documents.progress_step_index, documents.progress_step_count,
                documents.error, documents.created_at,
                (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
@@ -175,7 +175,7 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
     document = connection.execute(
         """
         SELECT id, original_name, stored_path, media_type, kind, status,
-               progress_step_name, progress_step_index, progress_step_count,
+               progress_step_name, progress_detail, progress_step_index, progress_step_count,
                error, created_at
         FROM documents WHERE id = ?
         """,

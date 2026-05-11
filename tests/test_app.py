@@ -27,7 +27,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
     assert '/static/styles.css?v=asset-ui-fixes-20260510' in response.text
-    assert '/static/app.js?v=asset-ui-fixes-20260510' in response.text
+    assert '/static/app.js?v=asset-progress-detail-20260511' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
@@ -96,6 +96,7 @@ def test_upload_returns_initial_progress_payload(tmp_path, monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] in {"processing", "ready"}
+    assert payload["progress_detail"] == ""
     assert payload["progress_step_count"] == 7
 
 
@@ -129,12 +130,12 @@ def test_retry_document_endpoint_restarts_failed_document(tmp_path, monkeypatch)
     document_id = connection.execute(
         """
         INSERT INTO documents (
-            original_name, stored_path, media_type, kind, status, progress_step_name, progress_step_index,
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
             progress_step_count, error, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "failed", "parsing document", 3, 7, "parse failed", "now"),
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "failed", "parsing document", "Processing 1/3 pages", 3, 7, "parse failed", "now"),
     ).lastrowid
     connection.commit()
     connection.close()
@@ -145,6 +146,7 @@ def test_retry_document_endpoint_restarts_failed_document(tmp_path, monkeypatch)
     payload = response.json()
     assert payload["status"] == "processing"
     assert payload["error"] == ""
+    assert payload["progress_detail"] == ""
 
 
 def test_retry_document_endpoint_rejects_non_failed_document(tmp_path, monkeypatch) -> None:
@@ -155,12 +157,12 @@ def test_retry_document_endpoint_rejects_non_failed_document(tmp_path, monkeypat
     document_id = connection.execute(
         """
         INSERT INTO documents (
-            original_name, stored_path, media_type, kind, status, progress_step_name, progress_step_index,
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
             progress_step_count, error, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "processing", "parsing document", 3, 7, "", "now"),
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "", "processing", "parsing document", "", 3, 7, "", "now"),
     ).lastrowid
     connection.commit()
     connection.close()

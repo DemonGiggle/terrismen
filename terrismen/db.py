@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS documents (
     kind TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'processing',
     progress_step_name TEXT NOT NULL DEFAULT '',
+    progress_detail TEXT NOT NULL DEFAULT '',
     progress_step_index INTEGER NOT NULL DEFAULT 0,
     progress_step_count INTEGER NOT NULL DEFAULT 0,
     error TEXT NOT NULL DEFAULT '',
@@ -206,6 +207,7 @@ def init_db(database_path: Path) -> None:
     with connect(database_path) as connection:
         connection.executescript(SCHEMA)
         _ensure_column(connection, "documents", "progress_step_name", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(connection, "documents", "progress_detail", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(connection, "documents", "progress_step_index", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "documents", "progress_step_count", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "settings", "llm_timeout_seconds", "REAL NOT NULL DEFAULT 600.0")

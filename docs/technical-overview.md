@@ -149,18 +149,21 @@ Each mystery row stores:
 
 After all notes for a document exist, `terrismen` runs a second pass:
 
-1. For each mystery, it builds search text from the mystery question, reason, and keywords.
-2. It searches the document's note corpus with FTS first, then a fallback `LIKE` query.
-3. It sends the mystery plus candidate notes and source excerpts to the LLM.
-4. The model returns:
-   - `resolved` or `open`
-   - a grounded summary
-   - candidate `note_ids`
-   - candidate `source_ids`
-5. The app keeps only IDs that were actually present in the provided candidates.
-6. It stores the primary resolution on `unresolved_mysteries` and all ranked links in `mystery_refs`.
+1. It loads unresolved mysteries in stable ID order.
+2. For each mystery, it builds search text from the mystery question, reason, and keywords.
+3. It searches the document's note corpus with FTS first, then a fallback `LIKE` query.
+4. Mysteries with usable candidates are grouped into batches using `mystery_resolution_batch_size` (default `5`, valid range `1-20`).
+5. Each batch is sent through the batch mystery-resolution prompt. By default the prompt includes notes only; raw source excerpts are added only when `mystery_resolution_reference_mode=notes_and_sources`.
+6. The model returns per-mystery `resolved` / `open` decisions plus candidate `note_ids` and `source_ids`.
+7. The app keeps only IDs that were actually present in the provided candidates, applies each mystery independently, and stores the primary resolution on `unresolved_mysteries` plus all ranked links in `mystery_refs`.
 
-If the evidence is still weak, the mystery stays open and its summary explains what is missing.
+Important behavior:
+
+- a final short batch is allowed when fewer than `N` mysteries remain
+- one batch can mix `resolved`, still-`open`, and parser-fallback outcomes
+- malformed results for one mystery do not block valid siblings in the same batch
+- if the top-level batch response is unusable, the affected mysteries stay open with fallback summaries
+- in `notes_only` mode, source refs are derived from selected note refs instead of pretending the model directly reviewed omitted source text
 
 ## How references work
 

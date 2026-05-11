@@ -59,11 +59,11 @@ ingest_document(...)
         |
         +--> _resolve_document_mysteries(...)
                   |
-                  +--> search candidate notes/source excerpts
+                  +--> search candidate notes + optional source excerpts
                   |
                   +--> resolve_mysteries(...)
                             system: MYSTERY_RESOLUTION_BATCH_PROMPT
-                            user: batch of original mysteries + candidate note/source evidence
+                            user: batch of original mysteries + candidate note evidence and optional source evidence
                             |
                             v
                        per-mystery resolved/open status + referenced note/source IDs
@@ -170,6 +170,13 @@ Rules:
 ```
 
 `resolve_mysteries(...)` validates the batch response per mystery. Unknown IDs, duplicated IDs after the first valid entry, invalid statuses, and invalid note/source references are treated as open-item fallbacks instead of corrupting the rest of the batch. If the top-level JSON or `results` array is unusable, the whole batch falls back to open outcomes.
+
+Current runtime behavior around this prompt:
+
+- mysteries are sent in stable batches using `mystery_resolution_batch_size` (default `5`)
+- `mystery_resolution_reference_mode=notes_only` is the default, so `candidate_sources` is empty unless the operator explicitly enables `notes_and_sources`
+- in `notes_only` mode, persisted source refs are derived from the selected note refs instead of treating direct source IDs as model-reviewed evidence
+- one batch can legitimately mix `resolved`, `open`, and parser-fallback outcomes
 
 ### `REFERENCE_PICKER_PROMPT`
 

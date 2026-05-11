@@ -17,7 +17,7 @@
 - DOCX, DOC, XLSX, XLS, and plaintext parsing with stable locators
 - Image forwarding to the configured model for multimodal note enrichment
 - Page-level unresolved mystery capture for ambiguous or incomplete content
-- End-of-document mystery review that links resolutions back to indexed notes and source references
+- End-of-document batch mystery review with configurable batch size and reference mode
 - Grounded chat flow that cites the referenced source locations
 - Local SQLite persistence for documents, sources, notes, and chat history
 
@@ -31,7 +31,7 @@
    - Excel files become sheet/row-range source units
 4. If images are found in supported formats, they are sent to the configured model and described.
 5. Each source unit plus any image descriptions is sent to the model to generate retrieval-friendly notes and unresolved mysteries when the page remains ambiguous.
-6. After the full document is read, `terrismen` revisits every unresolved mystery, searches indexed notes and source excerpts, and stores any grounded resolutions with direct note/source references.
+6. After the full document is read, `terrismen` revisits unresolved mysteries in stable batches, searches indexed notes, optionally includes source excerpts, and stores grounded per-mystery resolutions without forcing the whole batch to succeed or fail together.
 7. During chat, `terrismen` searches the stored notes and mystery resolutions, asks the model to pick the most relevant references, then answers from the original source excerpts and chat history.
 
 See [`docs/technical-overview.md`](docs/technical-overview.md) for the full ingestion, storage, mystery-resolution, and grounded-chat architecture, and [`docs/llm-prompts.md`](docs/llm-prompts.md) for the current prompt inventory.
@@ -67,6 +67,22 @@ terrismen
 ```
 
 The Settings page shows the current data folder and can move it to a new location. If `TERRISMEN_DATA_ROOT` is set, that environment variable stays authoritative and the UI shows the path as locked.
+
+## Mystery resolution settings
+
+The Settings page also controls how the end-of-document mystery pass batches LLM calls:
+
+- `mystery_resolution_batch_size`: default `5`, valid range `1-20`
+- `mystery_resolution_reference_mode`: default `notes_only`, optional `notes_and_sources`
+
+Tradeoffs:
+
+- Smaller batch sizes reduce prompt size and timeout risk, but require more model calls.
+- Larger batch sizes reduce repeated prompt overhead, but increase context size.
+- `notes_only` keeps prompts cheaper by default and derives source refs from the chosen notes.
+- `notes_and_sources` includes raw source excerpts in the prompt and lets the model select source refs directly.
+
+If one mystery in a batch comes back malformed, the other valid results in that same batch are still applied. When the batch response is unusable, the affected mysteries stay open with parser-fallback summaries instead of being marked resolved.
 
 ## Provider examples
 

@@ -187,7 +187,7 @@ Requirements:
 - Return JSON only, with no markdown fences or extra prose.
 ```
 
-`generate_batch_notes(...)` and `parse_batch_notes_response(...)` validate the response against the provided source IDs. Valid note items are salvaged individually, cross-note duplicate source coverage is rejected, malformed mysteries are dropped from otherwise valid notes, and uncovered input source IDs are tracked explicitly so the future ingestion wiring can retry or surface them safely.
+`generate_batch_notes(...)` and `parse_batch_notes_response(...)` validate the response against the provided source IDs. Valid note items are salvaged individually, cross-note duplicate source coverage is rejected, malformed mysteries are dropped from otherwise valid notes, and uncovered input source IDs are tracked explicitly so ingestion can persist valid work and fail/retry only the missing source units safely.
 
 ### `MYSTERY_RESOLUTION_BATCH_PROMPT`
 

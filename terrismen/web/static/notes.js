@@ -35,6 +35,10 @@ function renderEmpty(payload) {
   `;
 }
 
+function stripTrailingKeywordsLine(note) {
+  return String(note || "").replace(/\n+Keywords:\s*[^\n]+?\s*$/i, "").trimEnd();
+}
+
 function renderNormalNote(item) {
   return `
     <article class="note-card">
@@ -42,7 +46,7 @@ function renderNormalNote(item) {
         <strong>${escapeHtml(item.reference_label)}</strong>
         <span class="tag">Note</span>
       </div>
-      <div class="markdown-content">${renderMarkdown(item.note)}</div>
+      <div class="markdown-content">${renderMarkdown(stripTrailingKeywordsLine(item.note))}</div>
       ${item.keywords ? `<div class="meta">Keywords: ${escapeHtml(item.keywords)}</div>` : ""}
     </article>
   `;

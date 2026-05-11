@@ -23,6 +23,38 @@ class GeneratedNote:
 
 
 @dataclass(slots=True)
+class BatchNoteSourceInput:
+    source_id: int
+    reference_label: str
+    locator: str
+    page_number: int | None
+    content: str
+    image_descriptions: list[str]
+
+
+@dataclass(slots=True)
+class BatchMysteryDraft:
+    source_id: int
+    question: str
+    reason: str
+    keywords: str
+
+
+@dataclass(slots=True)
+class BatchGeneratedNote:
+    source_ids: list[int]
+    note_text: str
+    keywords: str
+    mysteries: list[BatchMysteryDraft]
+
+
+@dataclass(slots=True)
+class ParsedBatchNotes:
+    notes: list[BatchGeneratedNote]
+    missing_source_ids: list[int]
+
+
+@dataclass(slots=True)
 class MysteryResolution:
     status: str
     summary: str
@@ -78,6 +110,38 @@ Requirements:
   }
 - Only include mysteries when the source truly leaves an ambiguity, missing definition, unresolved reference, conflicting statement, or unclear diagram detail.
 - Do not invent mysteries if the content is already clear.
+"""
+
+BATCH_NOTE_SYSTEM_PROMPT = """You create dense retrieval-friendly notes from one or more related document source units.
+
+Requirements:
+- Preserve important requirements, technical flows, caveats, thresholds, and edge cases.
+- Do not flatten important details into vague summaries.
+- Mention image observations when supplied.
+- Prefer one note per source unit unless nearby source units are tightly related and clearly benefit from one combined note.
+- Every input source_id should appear in at most one returned note.
+- If a note covers several source units, list source_ids in primary-to-secondary order and put the main source first.
+- Every mystery must name exactly one origin source_id, and that source_id must appear in the same note's source_ids.
+- Return JSON only in this exact shape:
+  {
+    "notes": [
+      {
+        "source_ids": [101, 102],
+        "note": "dense note text",
+        "keywords": ["item1", "item2"],
+        "mysteries": [
+          {
+            "source_id": 101,
+            "question": "what remains unclear or unresolved?",
+            "reason": "why it is still unclear after reading the provided source unit",
+            "keywords": ["item1", "item2"]
+          }
+        ]
+      }
+    ]
+  }
+- Use only the provided source_ids exactly as given.
+- Return JSON only, with no markdown fences or extra prose.
 """
 
 IMAGE_PROMPT = """Describe this image in a way that helps document note taking.
@@ -222,11 +286,114 @@ def _parse_mysteries(value: object) -> list[MysteryDraft]:
     return mysteries
 
 
+def _parse_batch_mysteries(value: object, allowed_source_ids: set[int]) -> list[BatchMysteryDraft]:
+    if not isinstance(value, list):
+        return []
+    mysteries: list[BatchMysteryDraft] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_id = _normalize_optional_int(item.get("source_id"))
+        question = str(item.get("question", "")).strip()
+        if source_id is None or source_id not in allowed_source_ids or not question:
+            continue
+        reason = str(item.get("reason", "")).strip()
+        keywords = ", ".join(_normalize_string_list(item.get("keywords", [])))
+        mysteries.append(
+            BatchMysteryDraft(source_id=source_id, question=question, reason=reason, keywords=keywords)
+        )
+    return mysteries
+
+
 def _trim_prompt_text(value: str, limit: int) -> str:
     text = value.strip()
     if len(text) <= limit:
         return text
     return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def build_batch_note_prompt(sources: list[BatchNoteSourceInput]) -> str:
+    payload = {
+        "sources": [
+            {
+                "source_id": source.source_id,
+                "reference": source.reference_label,
+                "locator": source.locator,
+                "page_number": source.page_number,
+                "source_text": source.content or "[no text extracted]",
+                "image_descriptions": source.image_descriptions,
+            }
+            for source in sources
+        ]
+    }
+    return (
+        "Create one or more retrieval-friendly notes from these source units. "
+        "Use every source_id at most once across the returned notes.\n\n"
+        "Batch input:\n"
+        + json.dumps(payload, indent=2)
+    )
+
+
+def _parse_batch_note_item(
+    item: dict[str, object],
+    *,
+    allowed_source_ids: set[int],
+    covered_source_ids: set[int],
+) -> BatchGeneratedNote | None:
+    source_ids_value = item.get("source_ids")
+    if not isinstance(source_ids_value, list):
+        return None
+    source_ids = _normalize_int_list(source_ids_value)
+    if len(source_ids) != len(source_ids_value) or not source_ids:
+        return None
+    if len(source_ids) != len(set(source_ids)):
+        return None
+    if any(source_id not in allowed_source_ids or source_id in covered_source_ids for source_id in source_ids):
+        return None
+    note_body = str(item.get("note", "")).strip()
+    if not note_body:
+        return None
+    keyword_items = _normalize_string_list(item.get("keywords", []))
+    mysteries = _parse_batch_mysteries(item.get("mysteries", []), set(source_ids))
+    return BatchGeneratedNote(
+        source_ids=source_ids,
+        note_text=_format_note_text(note_body, keyword_items),
+        keywords=", ".join(keyword_items),
+        mysteries=mysteries,
+    )
+
+
+def parse_batch_notes_response(response: str, sources: list[BatchNoteSourceInput]) -> ParsedBatchNotes:
+    input_source_ids = [source.source_id for source in sources]
+    payload = _extract_json_object(response)
+    notes_payload = payload.get("notes")
+    if not isinstance(notes_payload, list):
+        return ParsedBatchNotes(notes=[], missing_source_ids=input_source_ids)
+
+    allowed_source_ids = set(input_source_ids)
+    covered_source_ids: set[int] = set()
+    parsed_notes: list[BatchGeneratedNote] = []
+    for item in notes_payload:
+        if not isinstance(item, dict):
+            continue
+        parsed = _parse_batch_note_item(
+            item,
+            allowed_source_ids=allowed_source_ids,
+            covered_source_ids=covered_source_ids,
+        )
+        if parsed is None:
+            continue
+        covered_source_ids.update(parsed.source_ids)
+        parsed_notes.append(parsed)
+    missing_source_ids = [source_id for source_id in input_source_ids if source_id not in covered_source_ids]
+    return ParsedBatchNotes(notes=parsed_notes, missing_source_ids=missing_source_ids)
+
+
+def generate_batch_notes(provider: BaseProvider, sources: list[BatchNoteSourceInput]) -> ParsedBatchNotes:
+    if not sources:
+        return ParsedBatchNotes(notes=[], missing_source_ids=[])
+    response = provider.complete(BATCH_NOTE_SYSTEM_PROMPT, build_batch_note_prompt(sources)).strip()
+    return parse_batch_notes_response(response, sources)
 
 
 def build_mystery_resolution_request(

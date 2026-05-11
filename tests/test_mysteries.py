@@ -4,10 +4,14 @@ from pathlib import Path
 
 from terrismen.services.chat import search_candidate_notes
 from terrismen.services.notes import (
+    BATCH_NOTE_SYSTEM_PROMPT,
+    BatchNoteSourceInput,
     MYSTERY_BATCH_INVALID_SUMMARY,
     MYSTERY_ITEM_INVALID_SUMMARY,
     build_mystery_resolution_request,
+    generate_batch_notes,
     generate_note,
+    parse_batch_notes_response,
     parse_mystery_resolution_batch_response,
     resolve_mysteries,
     resolve_mystery,
@@ -56,6 +60,149 @@ def test_generate_note_parses_structured_mysteries() -> None:
     assert result.keywords == "retrieval, citations"
     assert len(result.mysteries) == 1
     assert result.mysteries[0].question == "What ranking logic decides the final source shortlist?"
+
+
+def build_batch_sources() -> list[BatchNoteSourceInput]:
+    return [
+        BatchNoteSourceInput(
+            source_id=101,
+            reference_label="spec.pdf - Page 4",
+            locator="Page 4",
+            page_number=4,
+            content="Page 4 content",
+            image_descriptions=["diagram.png: A ranking pipeline diagram."],
+        ),
+        BatchNoteSourceInput(
+            source_id=102,
+            reference_label="spec.pdf - Page 5",
+            locator="Page 5",
+            page_number=5,
+            content="Page 5 content",
+            image_descriptions=[],
+        ),
+        BatchNoteSourceInput(
+            source_id=103,
+            reference_label="spec.pdf - Page 6",
+            locator="Page 6",
+            page_number=6,
+            content="Page 6 content",
+            image_descriptions=[],
+        ),
+    ]
+
+
+def test_generate_batch_notes_builds_prompt_and_parses_valid_batch() -> None:
+    provider = FakeProvider(
+        [
+            """
+            {
+              "notes": [
+                {
+                  "source_ids": [101, 102],
+                  "note": "Pages 4 and 5 define the retrieval pipeline together.",
+                  "keywords": ["retrieval", "pipeline"],
+                  "mysteries": [
+                    {
+                      "source_id": 101,
+                      "question": "What tie-breaker is used after ranking?",
+                      "reason": "The pages define ranking but omit equal-score handling.",
+                      "keywords": ["ranking", "tie-breaker"]
+                    }
+                  ]
+                },
+                {
+                  "source_ids": [103],
+                  "note": "Page 6 covers the final answer step.",
+                  "keywords": ["answering"],
+                  "mysteries": []
+                }
+              ]
+            }
+            """
+        ]
+    )
+
+    result = generate_batch_notes(provider, build_batch_sources())
+
+    assert len(result.notes) == 2
+    assert result.missing_source_ids == []
+    assert result.notes[0].source_ids == [101, 102]
+    assert result.notes[0].keywords == "retrieval, pipeline"
+    assert result.notes[0].mysteries[0].source_id == 101
+    assert result.notes[1].source_ids == [103]
+    assert provider.calls[0][0] == BATCH_NOTE_SYSTEM_PROMPT
+    assert '"source_id": 101' in provider.calls[0][1]
+    assert "diagram.png: A ranking pipeline diagram." in provider.calls[0][1]
+
+
+def test_parse_batch_notes_response_salvages_valid_items_and_tracks_missing_sources() -> None:
+    result = parse_batch_notes_response(
+        """
+        {
+          "notes": [
+            {
+              "source_ids": [101],
+              "note": "Page 4 note.",
+              "keywords": ["page4"],
+              "mysteries": []
+            },
+            {
+              "source_ids": [101, 102],
+              "note": "This overlaps source 101 and should be dropped.",
+              "keywords": ["bad"],
+              "mysteries": []
+            }
+          ]
+        }
+        """,
+        build_batch_sources(),
+    )
+
+    assert [note.source_ids for note in result.notes] == [[101]]
+    assert result.missing_source_ids == [102, 103]
+
+
+def test_parse_batch_notes_response_drops_invalid_mysteries_but_keeps_valid_note() -> None:
+    result = parse_batch_notes_response(
+        """
+        {
+          "notes": [
+            {
+              "source_ids": [101],
+              "note": "Page 4 note.",
+              "keywords": ["page4"],
+              "mysteries": [
+                {
+                  "source_id": 999,
+                  "question": "bad mystery",
+                  "reason": "bad source id",
+                  "keywords": ["bad"]
+                },
+                {
+                  "source_id": 101,
+                  "question": "valid mystery",
+                  "reason": "still unclear",
+                  "keywords": ["valid"]
+                }
+              ]
+            }
+          ]
+        }
+        """,
+        build_batch_sources(),
+    )
+
+    assert len(result.notes) == 1
+    assert len(result.notes[0].mysteries) == 1
+    assert result.notes[0].mysteries[0].question == "valid mystery"
+    assert result.missing_source_ids == [102, 103]
+
+
+def test_parse_batch_notes_response_falls_back_when_top_level_notes_are_invalid() -> None:
+    result = parse_batch_notes_response('{"status":"ok"}', build_batch_sources())
+
+    assert result.notes == []
+    assert result.missing_source_ids == [101, 102, 103]
 
 
 def test_resolve_mystery_parses_grounded_ids() -> None:

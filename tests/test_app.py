@@ -45,6 +45,7 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert "Document note batch size" in response.text
     assert "Mystery batch size" in response.text
     assert "Mystery reference mode" in response.text
+    assert response.text.index("Document note batch size") < response.text.index("Mystery batch size")
     assert '/static/styles.css?v=asset-math-render-20260511' in response.text
     assert '/static/settings.js?v=asset-ui-data-root-20260511' in response.text
 
@@ -378,6 +379,29 @@ def test_document_notes_api_returns_multi_source_references(tmp_path, monkeypatc
     assert len(payload["items"]) == 1
     assert payload["items"][0]["reference_label"] == "notes.pdf - Pages 4-5"
     assert [ref["source_id"] for ref in payload["items"][0]["references"]] == [primary_source_id, secondary_source_id]
+
+
+def test_summarize_note_refs_formats_noncontiguous_pages_and_mixed_sources(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+
+    noncontiguous_summary = app_module.summarize_note_refs(
+        "notes.pdf",
+        [
+            {"reference_label": "notes.pdf - Page 4", "locator": "Page 4", "page_number": 4},
+            {"reference_label": "notes.pdf - Page 6", "locator": "Page 6", "page_number": 6},
+        ],
+    )
+    mixed_summary = app_module.summarize_note_refs(
+        "notes.pdf",
+        [
+            {"reference_label": "notes.pdf - Chunk 1", "locator": "Chunk 1", "page_number": None},
+            {"reference_label": "notes.pdf - Chunk 2", "locator": "Chunk 2", "page_number": None},
+            {"reference_label": "notes.pdf - Chunk 3", "locator": "Chunk 3", "page_number": None},
+        ],
+    )
+
+    assert noncontiguous_summary == "notes.pdf - Pages 4, 6"
+    assert mixed_summary == "notes.pdf - 3 source units"
 
 
 def test_document_notes_api_count_matches_notes_with_primary_reference_rows(tmp_path, monkeypatch) -> None:

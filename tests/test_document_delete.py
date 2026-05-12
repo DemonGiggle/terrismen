@@ -50,11 +50,20 @@ def test_delete_document_removes_rows_and_files(tmp_path: Path) -> None:
         "INSERT INTO mystery_refs (mystery_id, relation_type, note_id, ref_rank, why_relevant) VALUES (?, ?, ?, ?, ?)",
         (mystery_id, "related", note_id, 1, "because"),
     )
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, source_id, "Chunk 1", 1, "partial_coverage", "bad note", "{}", utcnow(), utcnow()),
+    )
     connection.commit()
 
     assert delete_document(connection, int(document_id)) is True
 
-    for table in ("documents", "sources", "notes", "unresolved_mysteries", "mystery_refs", "source_images"):
+    for table in ("documents", "sources", "notes", "unresolved_mysteries", "mystery_refs", "source_images", "malformed_notes"):
         assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert not upload_path.exists()
     assert not image_path.exists()

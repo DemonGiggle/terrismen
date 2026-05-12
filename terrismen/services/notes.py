@@ -52,6 +52,9 @@ class BatchGeneratedNote:
 class ParsedBatchNotes:
     notes: list[BatchGeneratedNote]
     missing_source_ids: list[int]
+    raw_response: str = ""
+    error_type: str = ""
+    invalid_item_count: int = 0
 
 
 @dataclass(slots=True)
@@ -368,13 +371,20 @@ def parse_batch_notes_response(response: str, sources: list[BatchNoteSourceInput
     payload = _extract_json_object(response)
     notes_payload = payload.get("notes")
     if not isinstance(notes_payload, list):
-        return ParsedBatchNotes(notes=[], missing_source_ids=input_source_ids)
+        return ParsedBatchNotes(
+            notes=[],
+            missing_source_ids=input_source_ids,
+            raw_response=response,
+            error_type="missing_notes_array",
+        )
 
     allowed_source_ids = set(input_source_ids)
     covered_source_ids: set[int] = set()
     parsed_notes: list[BatchGeneratedNote] = []
+    invalid_item_count = 0
     for item in notes_payload:
         if not isinstance(item, dict):
+            invalid_item_count += 1
             continue
         parsed = _parse_batch_note_item(
             item,
@@ -382,11 +392,23 @@ def parse_batch_notes_response(response: str, sources: list[BatchNoteSourceInput
             covered_source_ids=covered_source_ids,
         )
         if parsed is None:
+            invalid_item_count += 1
             continue
         covered_source_ids.update(parsed.source_ids)
         parsed_notes.append(parsed)
     missing_source_ids = [source_id for source_id in input_source_ids if source_id not in covered_source_ids]
-    return ParsedBatchNotes(notes=parsed_notes, missing_source_ids=missing_source_ids)
+    error_type = ""
+    if missing_source_ids:
+        error_type = "no_valid_notes" if not parsed_notes else "partial_coverage"
+    elif invalid_item_count:
+        error_type = "ignored_invalid_items"
+    return ParsedBatchNotes(
+        notes=parsed_notes,
+        missing_source_ids=missing_source_ids,
+        raw_response=response,
+        error_type=error_type,
+        invalid_item_count=invalid_item_count,
+    )
 
 
 def generate_batch_notes(provider: BaseProvider, sources: list[BatchNoteSourceInput]) -> ParsedBatchNotes:

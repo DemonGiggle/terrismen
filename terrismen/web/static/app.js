@@ -105,18 +105,18 @@ function renderDocuments() {
               </span>
               ${progress ? `<span class="meta">${escapeHtml(progress)}</span>` : ""}
               ${progressDetail ? `<span class="meta">${escapeHtml(progressDetail)}</span>` : ""}
-              <span class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</span>
+               <span class="meta">${escapeHtml(documentItem.kind || "pending")} • ${documentItem.source_count} sources • ${documentItem.note_count} notes • ${documentItem.malformed_note_count || 0} malformed notes • ${documentItem.mystery_count || 0} mysteries${documentItem.open_mystery_count ? ` (${documentItem.open_mystery_count} open)` : ""}</span>
               ${documentItem.error ? `<span class="meta">${escapeHtml(documentItem.error)}</span>` : ""}
             </span>
           </label>
           <div class="document-card-actions">
             ${
-              documentItem.source_count || documentItem.note_count || documentItem.mystery_count
+              documentItem.source_count || documentItem.note_count || documentItem.malformed_note_count || documentItem.mystery_count
                 ? `<a class="button-link secondary compact-action" href="/documents/${documentItem.id}/notes" data-document-action="view">View</a>`
                 : ""
             }
             ${
-              documentItem.status === "failed"
+              documentItem.status === "failed" || (documentItem.status === "ready" && documentItem.malformed_note_count)
                 ? `<button class="secondary compact-action" type="button" data-document-action="retry">Retry</button>`
                 : ""
             }

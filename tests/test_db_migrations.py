@@ -197,9 +197,13 @@ def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
         document_note_batch_size = connection.execute(
             "SELECT document_note_batch_size FROM settings WHERE id = 1"
         ).fetchone()[0]
+        malformed_notes_exists = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'malformed_notes'"
+        ).fetchone()
 
     assert settings_count == 1
     assert document_note_batch_size == 5
+    assert malformed_notes_exists is not None
 
 
 def test_init_db_is_idempotent_for_latest_database(tmp_path) -> None:

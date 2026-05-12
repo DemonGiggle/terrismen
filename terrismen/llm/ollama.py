@@ -17,9 +17,9 @@ class OllamaProvider(BaseProvider):
 
     def complete(self, system_prompt: str, user_prompt: str, *, images: list[ImageInput] | None = None) -> str:
         image_payload = [base64.b64encode(image.data).decode("ascii") for image in images or []]
-        response = self._client.post(
+        response = self._post_json(
             self._endpoint(),
-            json={
+            payload={
                 "model": self.settings.model,
                 "stream": False,
                 "options": {"temperature": self.settings.temperature},
@@ -28,6 +28,7 @@ class OllamaProvider(BaseProvider):
                     {"role": "user", "content": user_prompt, "images": image_payload},
                 ],
             },
+            image_count=len(image_payload),
         )
         if response.status_code >= 400:
             raise ProviderError(f"Ollama provider error {response.status_code}: {response.text}")

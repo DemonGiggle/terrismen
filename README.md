@@ -151,6 +151,14 @@ Run the app locally:
 make run
 ```
 
+Enable debug logging for LLM round-trips:
+
+```bash
+DEBUG=1 make run
+```
+
+When debug mode is enabled, startup prints the debug log path. The log records one JSON line per LLM request start/end/timeout with duration, provider/model/endpoint, caller file and line, and ingestion or chat context such as the current document, step, source batch, or mystery batch.
+
 ### Database schema changes
 
 `terrismen` applies SQLite schema migrations automatically through `init_db(...)` at startup and in tests.

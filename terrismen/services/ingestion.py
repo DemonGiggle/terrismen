@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Final
 
 from terrismen.config import AppConfig
+from terrismen.debug import llm_operation_context
 from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
 from terrismen.llm.base import ProviderError
@@ -356,17 +357,26 @@ def _flush_mystery_batch(
     connection: sqlite3.Connection,
     *,
     provider,
+    document_id: int,
     document_name: str,
     batch: list[PreparedMysteryResolution],
     include_source_excerpts: bool,
 ) -> int:
     if not batch:
         return 0
-    resolutions = resolve_mysteries(
-        provider,
-        [item.request for item in batch],
-        include_source_excerpts=include_source_excerpts,
-    )
+    with llm_operation_context(
+        workflow="document_ingestion",
+        document_id=document_id,
+        step="resolving mysteries",
+        mystery_ids=[item.request.mystery_id for item in batch],
+        batch_size=len(batch),
+        reference_mode="notes_and_sources" if include_source_excerpts else "notes_only",
+    ):
+        resolutions = resolve_mysteries(
+            provider,
+            [item.request for item in batch],
+            include_source_excerpts=include_source_excerpts,
+        )
     for prepared, resolution in zip(batch, resolutions, strict=True):
         _apply_mystery_resolution_result(
             connection,
@@ -433,6 +443,7 @@ def _resolve_document_mysteries(
             processed_count += _flush_mystery_batch(
                 connection,
                 provider=provider,
+                document_id=document_id,
                 document_name=document_name,
                 batch=pending_batch,
                 include_source_excerpts=include_source_excerpts,
@@ -470,6 +481,7 @@ def _resolve_document_mysteries(
         processed_count += _flush_mystery_batch(
             connection,
             provider=provider,
+            document_id=document_id,
             document_name=document_name,
             batch=pending_batch,
             include_source_excerpts=include_source_excerpts,
@@ -487,6 +499,7 @@ def _resolve_document_mysteries(
         processed_count += _flush_mystery_batch(
             connection,
             provider=provider,
+            document_id=document_id,
             document_name=document_name,
             batch=pending_batch,
             include_source_excerpts=include_source_excerpts,
@@ -696,7 +709,15 @@ def _flush_note_batch(
         )
         for item in batch
     ]
-    parsed = generate_batch_notes(provider, batch_inputs)
+    with llm_operation_context(
+        workflow="document_ingestion",
+        document_id=document_id,
+        step="generating notes",
+        source_ids=source_ids,
+        source_locators=[item.source.locator for item in batch],
+        batch_size=len(batch),
+    ):
+        parsed = generate_batch_notes(provider, batch_inputs)
     covered_source_ids: set[int] = set()
     for generated_note in parsed.notes:
         covered_source_ids.update(generated_note.source_ids)
@@ -790,7 +811,18 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                         _format_progress_detail(source_index, total_sources, progress_noun),
                     )
                     connection.commit()
-                    image_descriptions = describe_images(provider, source)
+                    with llm_operation_context(
+                        workflow="document_ingestion",
+                        document_id=document_id,
+                        step="describing images",
+                        source_id=source_id,
+                        source_locator=source.locator,
+                        source_page_number=source.page_number,
+                        source_index=source_index,
+                        total_sources=total_sources,
+                        image_count=len(source.images),
+                    ):
+                        image_descriptions = describe_images(provider, source)
                 else:
                     image_descriptions = []
                 update_document_progress(

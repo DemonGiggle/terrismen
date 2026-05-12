@@ -6,6 +6,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from terrismen.debug import debug_enabled_from_env, resolve_debug_log_path
+
 
 DATA_ROOT_ENV_VAR = "TERRISMEN_DATA_ROOT"
 APP_CONFIG_ENV_VAR = "TERRISMEN_APP_CONFIG"
@@ -20,6 +22,8 @@ class AppConfig:
     host: str
     port: int
     app_config_path: Path | None = None
+    debug_enabled: bool = False
+    debug_log_path: Path | None = None
 
 
 def data_root_is_env_controlled() -> bool:
@@ -92,6 +96,7 @@ def load_config() -> AppConfig:
     images_dir = data_root / "images"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     images_dir.mkdir(parents=True, exist_ok=True)
+    debug_enabled = debug_enabled_from_env()
     return AppConfig(
         data_root=data_root,
         uploads_dir=uploads_dir,
@@ -100,4 +105,6 @@ def load_config() -> AppConfig:
         host=os.getenv("TERRISMEN_HOST", "127.0.0.1"),
         port=int(os.getenv("TERRISMEN_PORT", "8000")),
         app_config_path=app_config_path,
+        debug_enabled=debug_enabled,
+        debug_log_path=resolve_debug_log_path(data_root=data_root, app_config_path=app_config_path) if debug_enabled else None,
     )

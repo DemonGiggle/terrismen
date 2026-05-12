@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from terrismen.config import AppConfig, data_root_is_env_controlled, load_config, switch_data_root
+from terrismen.debug import configure_debug_logging
 from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
@@ -440,7 +441,11 @@ def chat_request_status(request_id: str, connection=Depends(get_connection)) -> 
 
 
 def main() -> None:
-    uvicorn.run("terrismen.app:app", host=config.host, port=config.port, reload=False)
+    if config.debug_enabled and config.debug_log_path is not None:
+        debug_log_path = configure_debug_logging(config.debug_log_path)
+        if debug_log_path is not None:
+            print(f"The debug log is saved to {debug_log_path}")
+    uvicorn.run(app, host=config.host, port=config.port, reload=False)
 
 
 if __name__ == "__main__":

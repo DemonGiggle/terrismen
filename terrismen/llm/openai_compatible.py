@@ -36,10 +36,10 @@ class OpenAICompatibleProvider(BaseProvider):
         if self.settings.api_key:
             headers["Authorization"] = f"Bearer {self.settings.api_key}"
 
-        response = self._client.post(
+        response = self._post_json(
             self._endpoint(),
             headers=headers,
-            json={
+            payload={
                 "model": self.settings.model,
                 "temperature": self.settings.temperature,
                 "stream": False,
@@ -48,6 +48,7 @@ class OpenAICompatibleProvider(BaseProvider):
                     {"role": "user", "content": user_content},
                 ],
             },
+            image_count=len(images or []),
         )
         if response.status_code >= 400:
             raise ProviderError(f"OpenAI-compatible provider error {response.status_code}: {response.text}")

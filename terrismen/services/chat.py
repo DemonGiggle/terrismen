@@ -8,6 +8,7 @@ from collections import OrderedDict
 from typing import Final
 
 from terrismen.config import AppConfig
+from terrismen.debug import llm_operation_context
 from terrismen.db import connect, utcnow
 from terrismen.llm import build_provider
 from terrismen.llm.base import ProviderError
@@ -357,7 +358,14 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
 
         update_chat_request_progress(connection, request_id, "picking source references")
         connection.commit()
-        picked_source_ids = _pick_source_ids(provider, question, history, candidates)
+        with llm_operation_context(
+            workflow="chat",
+            request_id=request_id,
+            step="picking source references",
+            candidate_count=len(candidates),
+            document_ids=document_ids,
+        ):
+            picked_source_ids = _pick_source_ids(provider, question, history, candidates)
         if not picked_source_ids:
             picked_source_ids = list(OrderedDict.fromkeys(candidate["source_id"] for candidate in candidates[:4]))
 
@@ -367,7 +375,14 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
 
         update_chat_request_progress(connection, request_id, "generating final answer")
         connection.commit()
-        answer, citations = _generate_answer(provider, history, question, sources)
+        with llm_operation_context(
+            workflow="chat",
+            request_id=request_id,
+            step="generating final answer",
+            source_ids=[int(source["id"]) for source in sources],
+            document_ids=document_ids,
+        ):
+            answer, citations = _generate_answer(provider, history, question, sources)
         assistant_id = save_message(connection, "assistant", answer, citations)
         connection.execute(
             """

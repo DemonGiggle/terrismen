@@ -216,6 +216,7 @@ def list_documents(connection=Depends(get_connection)) -> list[dict[str, object]
                documents.error, documents.created_at,
                (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id) AS mystery_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id AND unresolved_mysteries.status = 'open') AS open_mystery_count
         FROM documents
@@ -231,7 +232,8 @@ def get_document(document_id: int, connection=Depends(get_connection)) -> dict[s
         """
         SELECT id, original_name, stored_path, media_type, kind, status,
                progress_step_name, progress_detail, progress_step_index, progress_step_count,
-               error, created_at
+               error, created_at,
+               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count
         FROM documents WHERE id = ?
         """,
         (document_id,),
@@ -292,8 +294,8 @@ def list_document_notes(
     ).fetchone()
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    if note_type not in {"normal", "mystery"}:
-        raise HTTPException(status_code=400, detail="note_type must be normal or mystery")
+    if note_type not in {"normal", "malformed", "mystery"}:
+        raise HTTPException(status_code=400, detail="note_type must be normal, malformed, or mystery")
     page = max(page, 1)
     page_size = min(max(page_size, 1), 50)
     offset = (page - 1) * page_size
@@ -312,6 +314,26 @@ def list_document_notes(
             JOIN sources ON sources.id = unresolved_mysteries.source_id
             WHERE unresolved_mysteries.document_id = ?
             ORDER BY unresolved_mysteries.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (document_id, page_size, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = row_to_dict(row) or {}
+            item["reference_label"] = build_reference_label(document["original_name"], item["locator"], item["page_number"])
+            items.append(item)
+    elif note_type == "malformed":
+        total = connection.execute(
+            "SELECT COUNT(*) FROM malformed_notes WHERE document_id = ?",
+            (document_id,),
+        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            SELECT id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+            FROM malformed_notes
+            WHERE document_id = ?
+            ORDER BY source_id ASC
             LIMIT ? OFFSET ?
             """,
             (document_id, page_size, offset),

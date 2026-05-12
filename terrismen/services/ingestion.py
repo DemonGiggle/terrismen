@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Final
 
 from terrismen.config import AppConfig
-from terrismen.debug import llm_operation_context
+from terrismen.debug import llm_operation_context, log_debug_event
 from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
 from terrismen.llm.base import ProviderError
@@ -167,6 +167,7 @@ def _source_progress_noun(kind: str) -> str:
 
 
 def _delete_document_outputs(connection: sqlite3.Connection, document_id: int) -> None:
+    connection.execute("DELETE FROM malformed_notes WHERE document_id = ?", (document_id,))
     connection.execute("DELETE FROM sources WHERE document_id = ?", (document_id,))
     connection.execute("DELETE FROM notes WHERE document_id = ?", (document_id,))
     connection.execute("DELETE FROM unresolved_mysteries WHERE document_id = ?", (document_id,))
@@ -562,7 +563,8 @@ def continue_document_ingestion(config: AppConfig, document_id: int) -> None:
 def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
     row = connection.execute(
         """
-        SELECT id, status, progress_step_name
+        SELECT id, status, progress_step_name,
+               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count
         FROM documents
         WHERE id = ?
         """,
@@ -570,16 +572,19 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
     ).fetchone()
     if row is None:
         raise ValueError("Document not found")
-    if row["status"] != "failed":
-        raise ValueError("Only failed documents can be retried")
-
-    resume_step = row["progress_step_name"] or "parsing document"
-    if resume_step in {"resolving mysteries", "finalizing document"}:
-        resume_step = "resolving mysteries"
-    elif resume_step == "parsing document":
-        resume_step = "parsing document"
-        _delete_document_outputs(connection, document_id)
-        connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
+    malformed_note_count = int(row["malformed_note_count"])
+    if row["status"] == "failed":
+        resume_step = row["progress_step_name"] or "parsing document"
+        if resume_step in {"resolving mysteries", "finalizing document"}:
+            resume_step = "resolving mysteries"
+        elif resume_step == "parsing document":
+            resume_step = "parsing document"
+            _delete_document_outputs(connection, document_id)
+            connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
+    elif row["status"] == "ready" and malformed_note_count > 0:
+        resume_step = "generating notes"
+    else:
+        raise ValueError("Only failed documents or ready documents with malformed notes can be retried")
 
     update_document_progress(connection, document_id, resume_step)
     connection.execute(
@@ -594,6 +599,7 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
                error, created_at,
                (SELECT COUNT(*) FROM sources WHERE sources.document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE notes.document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id) AS mystery_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE unresolved_mysteries.document_id = documents.id AND unresolved_mysteries.status = 'open') AS open_mystery_count
         FROM documents
@@ -684,6 +690,84 @@ def _persist_batch_generated_note(
             note_id=note_id,
             draft=MysteryDraft(question=mystery.question, reason=mystery.reason, keywords=mystery.keywords),
         )
+    placeholders = ", ".join("?" for _ in generated_note.source_ids)
+    connection.execute(
+        f"DELETE FROM malformed_notes WHERE source_id IN ({placeholders})",
+        generated_note.source_ids,
+    )
+
+
+def _record_malformed_note(
+    connection: sqlite3.Connection,
+    *,
+    document_id: int,
+    source_id: int,
+    locator: str,
+    page_number: int | None,
+    error_type: str,
+    error_detail: str,
+    raw_response: str,
+) -> None:
+    now = utcnow()
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET
+            locator = excluded.locator,
+            page_number = excluded.page_number,
+            error_type = excluded.error_type,
+            error_detail = excluded.error_detail,
+            raw_response = excluded.raw_response,
+            updated_at = excluded.updated_at
+        """,
+        (document_id, source_id, locator, page_number, error_type, error_detail, raw_response, now, now),
+    )
+
+
+def _record_malformed_batch_notes(
+    connection: sqlite3.Connection,
+    *,
+    document_id: int,
+    batch: list[PendingBatchSource],
+    parsed,
+) -> None:
+    if not parsed.missing_source_ids:
+        return
+    missing_source_ids = set(parsed.missing_source_ids)
+    covered_count = len(batch) - len(missing_source_ids)
+    for item in batch:
+        if item.source_id not in missing_source_ids:
+            continue
+        if parsed.error_type == "no_valid_notes":
+            error_detail = "The model response did not contain a usable note for this source unit."
+        else:
+            error_detail = (
+                f"The model response omitted this source unit while covering {covered_count}/{len(batch)} source units."
+            )
+        if parsed.invalid_item_count:
+            error_detail += f" Ignored {parsed.invalid_item_count} malformed note item(s)."
+        _record_malformed_note(
+            connection,
+            document_id=document_id,
+            source_id=item.source_id,
+            locator=item.source.locator,
+            page_number=item.source.page_number,
+            error_type=parsed.error_type or "partial_coverage",
+            error_detail=error_detail,
+            raw_response=parsed.raw_response,
+        )
+    log_debug_event(
+        "malformed_note_batch",
+        document_id=document_id,
+        error_type=parsed.error_type or "partial_coverage",
+        missing_source_ids=sorted(missing_source_ids),
+        batch_source_ids=[item.source_id for item in batch],
+        invalid_item_count=parsed.invalid_item_count,
+        raw_response=parsed.raw_response,
+    )
 
 
 def _flush_note_batch(
@@ -722,6 +806,7 @@ def _flush_note_batch(
     for generated_note in parsed.notes:
         covered_source_ids.update(generated_note.source_ids)
         _persist_batch_generated_note(connection, document_id=document_id, generated_note=generated_note)
+    _record_malformed_batch_notes(connection, document_id=document_id, batch=batch, parsed=parsed)
     missing_locators = [item.source.locator for item in batch if item.source_id in set(parsed.missing_source_ids)]
     return covered_source_ids, missing_locators
 
@@ -871,10 +956,6 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
                 )
                 connection.commit()
-                if missing_locators:
-                    raise RuntimeError(
-                        "Batch note generation did not return notes for source units: " + ", ".join(missing_locators)
-                    )
                 pending_batch_sources = []
 
             if pending_batch_sources:
@@ -899,10 +980,6 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
                 )
                 connection.commit()
-                if missing_locators:
-                    raise RuntimeError(
-                        "Batch note generation did not return notes for source units: " + ", ".join(missing_locators)
-                    )
 
             mystery_count = connection.execute(
                 "SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = ?",

@@ -223,7 +223,7 @@ def test_retry_document_endpoint_rejects_non_failed_document(tmp_path, monkeypat
     response = client.post(f"/api/documents/{document_id}/retry")
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Only failed documents can be retried"
+    assert response.json()["detail"] == "Only failed documents or ready documents with malformed notes can be retried"
 
 
 def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
@@ -273,6 +273,25 @@ def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None
         """,
         (document_id, source_id, note_id, "mystery?", "unclear", "mystery", "open", app_module.config.database_path.as_posix()),
     )
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            document_id,
+            source_id,
+            "Page 1",
+            1,
+            "partial_coverage",
+            "The model response omitted this source unit.",
+            '{"notes":[]}',
+            "now",
+            "now",
+        ),
+    )
     connection.commit()
     connection.close()
 
@@ -289,6 +308,63 @@ def test_document_notes_api_paginates_and_filters(tmp_path, monkeypatch) -> None
     mystery_payload = mystery_response.json()
     assert mystery_payload["total"] == 1
     assert mystery_payload["items"][0]["question"] == "mystery?"
+
+    malformed_response = client.get(f"/api/documents/{document_id}/notes?note_type=malformed&page_size=2")
+    assert malformed_response.status_code == 200
+    malformed_payload = malformed_response.json()
+    assert malformed_payload["total"] == 1
+    assert malformed_payload["items"][0]["error_type"] == "partial_coverage"
+    assert malformed_payload["items"][0]["reference_label"] == "notes.pdf - Page 1"
+
+
+def test_retry_document_endpoint_restarts_ready_document_with_malformed_notes(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "continue_document_ingestion", lambda config, document_id: None)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    connection.execute(
+        """
+        UPDATE settings
+        SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?
+        WHERE id = 1
+        """,
+        ("ollama", "http://localhost:11434", "llama3.2", "", 0.2, 600.0),
+    )
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "ready", "finalizing document", "", 7, 7, "", "now"),
+    ).lastrowid
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 2", 2, "content", "{}"),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'now', 'now')
+        """,
+        (document_id, source_id, "Chunk 2", 2, "partial_coverage", "bad note", "{}"),
+    )
+    connection.commit()
+    connection.close()
+
+    response = client.post(f"/api/documents/{document_id}/retry")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "processing"
+    assert payload["malformed_note_count"] == 1
 
 
 def test_document_detail_api_includes_note_for_secondary_source_links(tmp_path, monkeypatch) -> None:

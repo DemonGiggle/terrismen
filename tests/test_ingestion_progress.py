@@ -762,7 +762,7 @@ def test_continue_document_ingestion_batches_note_generation_and_uses_image_desc
     check_connection.close()
 
 
-def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_skips_completed_sources(
+def test_continue_document_ingestion_records_malformed_notes_and_retry_recovers_missing_sources(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -826,7 +826,7 @@ def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_s
     continue_document_ingestion(config, document_id)
 
     failed_connection = connect(config.database_path)
-    failed_row = failed_connection.execute(
+    document_row = failed_connection.execute(
         "SELECT status, error, progress_step_name FROM documents WHERE id = ?",
         (document_id,),
     ).fetchone()
@@ -841,14 +841,28 @@ def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_s
         """,
         (document_id,),
     ).fetchall()
+    malformed_rows = failed_connection.execute(
+        "SELECT source_id, locator, error_type, error_detail, raw_response FROM malformed_notes WHERE document_id = ? ORDER BY source_id",
+        (document_id,),
+    ).fetchall()
     failed_connection.close()
 
-    assert failed_row["status"] == "failed"
-    assert failed_row["progress_step_name"] == "generating notes"
-    assert "Chunk 2" in failed_row["error"]
+    assert document_row["status"] == "ready"
+    assert document_row["progress_step_name"] == "finalizing document"
+    assert document_row["error"] == ""
     assert [dict(row) for row in source_note_counts] == [
         {"locator": "Chunk 1", "note_count": 1},
         {"locator": "Chunk 2", "note_count": 0},
+        {"locator": "Chunk 3", "note_count": 1},
+    ]
+    assert [dict(row) for row in malformed_rows] == [
+        {
+            "source_id": 2,
+            "locator": "Chunk 2",
+            "error_type": "partial_coverage",
+            "error_detail": "The model response omitted this source unit while covering 1/2 source units.",
+            "raw_response": "",
+        }
     ]
 
     retry_connection = connect(config.database_path)
@@ -856,6 +870,7 @@ def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_s
     retry_connection.close()
 
     assert payload["status"] == "processing"
+    assert payload["malformed_note_count"] == 1
 
     continue_document_ingestion(config, document_id)
 
@@ -863,7 +878,8 @@ def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_s
     document_row = recovered_connection.execute(
         """
         SELECT status, progress_step_name,
-               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE document_id = documents.id) AS malformed_note_count
         FROM documents
         WHERE id = ?
         """,
@@ -882,10 +898,11 @@ def test_continue_document_ingestion_fails_on_missing_batch_coverage_and_retry_s
     ).fetchall()
     recovered_connection.close()
 
-    assert batch_calls == [[1, 2], [2, 3]]
+    assert batch_calls == [[1, 2], [3], [2]]
     assert document_row["status"] == "ready"
     assert document_row["progress_step_name"] == "finalizing document"
-    assert document_row["note_count"] == 2
+    assert document_row["note_count"] == 3
+    assert document_row["malformed_note_count"] == 0
     assert [dict(row) for row in source_note_counts] == [
         {"locator": "Chunk 1", "note_count": 1},
         {"locator": "Chunk 2", "note_count": 1},
@@ -958,6 +975,15 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
         """,
         (document_id, source_id, note_id, "mystery?", "", ""),
     )
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'now', 'now')
+        """,
+        (document_id, source_id, "Page 1", 1, "partial_coverage", "bad note", "{}"),
+    )
     connection.commit()
 
     payload = retry_document_ingestion(connection, document_id)
@@ -967,6 +993,7 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
         SELECT status, error, kind, progress_step_name, progress_detail,
                (SELECT COUNT(*) FROM sources WHERE document_id = documents.id) AS source_count,
                (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE document_id = documents.id) AS malformed_note_count,
                (SELECT COUNT(*) FROM unresolved_mysteries WHERE document_id = documents.id) AS mystery_count
         FROM documents
         WHERE id = ?
@@ -982,6 +1009,7 @@ def test_retry_document_ingestion_resets_partial_outputs_for_parse_stage(tmp_pat
     assert row["progress_detail"] == ""
     assert row["source_count"] == 0
     assert row["note_count"] == 0
+    assert row["malformed_note_count"] == 0
     assert row["mystery_count"] == 0
     connection.close()
 
@@ -1036,6 +1064,54 @@ def test_retry_document_ingestion_reuses_completed_sources_for_note_stage(tmp_pa
     assert row["progress_detail"] == ""
     assert row["source_count"] == 1
     assert row["note_count"] == 1
+    connection.close()
+
+
+def test_retry_document_ingestion_allows_ready_documents_with_malformed_notes(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'ready', progress_step_name = ?, progress_detail = ?, progress_step_index = ?, error = '' WHERE id = ?",
+        ("text", "finalizing document", "", 7, document_id),
+    )
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Chunk 2", 2, "content", "{}"),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO malformed_notes (
+            document_id, source_id, locator, page_number, error_type, error_detail, raw_response, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'now', 'now')
+        """,
+        (document_id, source_id, "Chunk 2", 2, "partial_coverage", "bad note", "{}"),
+    )
+    connection.commit()
+
+    payload = retry_document_ingestion(connection, document_id)
+
+    row = connection.execute(
+        "SELECT status, progress_step_name, error FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    assert payload["status"] == "processing"
+    assert payload["malformed_note_count"] == 1
+    assert row["status"] == "processing"
+    assert row["progress_step_name"] == "generating notes"
+    assert row["error"] == ""
     connection.close()
 
 
@@ -1242,7 +1318,7 @@ def test_retry_document_ingestion_rejects_non_failed_documents(tmp_path: Path) -
     try:
         retry_document_ingestion(connection, document_id)
     except ValueError as exc:
-        assert str(exc) == "Only failed documents can be retried"
+        assert str(exc) == "Only failed documents or ready documents with malformed notes can be retried"
     else:
         raise AssertionError("retry_document_ingestion should reject non-failed documents")
 

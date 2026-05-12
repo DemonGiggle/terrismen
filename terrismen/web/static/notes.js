@@ -27,10 +27,20 @@ window.addEventListener("terrismen:math-ready", () => {
 });
 
 function renderEmpty(payload) {
+  const label = payload.note_type === "mystery"
+    ? "unresolved questions"
+    : payload.note_type === "malformed"
+      ? "malformed notes"
+      : "notes";
+  const description = payload.note_type === "mystery"
+    ? "Questions found during processing will appear here."
+    : payload.note_type === "malformed"
+      ? "Malformed model outputs that could not be stored as normal notes will appear here."
+      : "Notes will appear here after processing.";
   elements.list.innerHTML = `
     <div class="empty-state">
-      <strong>No ${payload.note_type === "mystery" ? "unresolved questions" : "notes"} yet.</strong>
-      <p>${payload.note_type === "mystery" ? "Questions found during processing will appear here." : "Notes will appear here after processing."}</p>
+      <strong>No ${label} yet.</strong>
+      <p>${description}</p>
     </div>
   `;
 }
@@ -80,10 +90,26 @@ function renderMysteryNote(item) {
   `;
 }
 
+function renderMalformedNote(item) {
+  return `
+    <article class="note-card mystery-card">
+      <div class="split-header">
+        <strong>${escapeHtml(item.reference_label)}</strong>
+        <span class="tag">${escapeHtml(item.error_type || "malformed")}</span>
+      </div>
+      <p>${escapeHtml(item.error_detail || "The model response could not be stored as a normal note.")}</p>
+      <div class="meta">Source ID: ${escapeHtml(String(item.source_id))}</div>
+      ${item.raw_response ? `<details><summary>Raw model response</summary><pre>${escapeHtml(item.raw_response)}</pre></details>` : ""}
+    </article>
+  `;
+}
+
 function renderPayload(payload) {
   elements.title.textContent = payload.document.original_name;
   elements.subtitle.textContent = `${payload.document.status} document`;
-  elements.count.textContent = `${payload.total} ${payload.note_type === "mystery" ? "questions" : "notes"}`;
+  elements.count.textContent = `${payload.total} ${
+    payload.note_type === "mystery" ? "questions" : payload.note_type === "malformed" ? "malformed notes" : "notes"
+  }`;
   state.totalPages = payload.total_pages;
   elements.pageLabel.textContent = payload.total_pages ? `Page ${payload.page} of ${payload.total_pages}` : "Page 0 of 0";
   elements.previous.disabled = payload.page <= 1;
@@ -94,7 +120,7 @@ function renderPayload(payload) {
     return;
   }
   elements.list.innerHTML = payload.items.map((item) => (
-    payload.note_type === "mystery" ? renderMysteryNote(item) : renderNormalNote(item)
+    payload.note_type === "mystery" ? renderMysteryNote(item) : payload.note_type === "malformed" ? renderMalformedNote(item) : renderNormalNote(item)
   )).join("");
   typesetMath(elements.list);
 }

@@ -475,10 +475,34 @@ def _migration_0003_add_note_sources(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_0004_add_malformed_notes(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS malformed_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            locator TEXT NOT NULL,
+            page_number INTEGER,
+            error_type TEXT NOT NULL DEFAULT '',
+            error_detail TEXT NOT NULL DEFAULT '',
+            raw_response TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(source_id)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_malformed_notes_document_source ON malformed_notes(document_id, source_id)"
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     1: _migration_0001_initial_schema,
     2: _migration_0002_add_document_note_batch_size,
     3: _migration_0003_add_note_sources,
+    4: _migration_0004_add_malformed_notes,
 }
 
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)

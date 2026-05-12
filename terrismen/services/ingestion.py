@@ -16,6 +16,7 @@ from terrismen.llm.base import ProviderError
 from terrismen.services.notes import (
     BatchNoteSourceInput,
     MysteryDraft,
+    MysteryBatchResolution,
     MysteryResolutionRequest,
     build_reference_label,
     build_mystery_resolution_request,
@@ -373,11 +374,31 @@ def _flush_mystery_batch(
         batch_size=len(batch),
         reference_mode="notes_and_sources" if include_source_excerpts else "notes_only",
     ):
-        resolutions = resolve_mysteries(
-            provider,
-            [item.request for item in batch],
-            include_source_excerpts=include_source_excerpts,
-        )
+        try:
+            resolutions = resolve_mysteries(
+                provider,
+                [item.request for item in batch],
+                include_source_excerpts=include_source_excerpts,
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            log_debug_event(
+                "mystery_batch_skip",
+                document_id=document_id,
+                mystery_ids=[item.request.mystery_id for item in batch],
+                error_type=type(exc).__name__,
+                error_message=str(exc) or type(exc).__name__,
+            )
+            resolutions = [
+                MysteryBatchResolution(
+                    mystery_id=item.request.mystery_id,
+                    status="open",
+                    summary=f"Mystery resolution was skipped after an LLM error: {message}",
+                    note_ids=[],
+                    source_ids=[],
+                )
+                for item in batch
+            ]
     for prepared, resolution in zip(batch, resolutions, strict=True):
         _apply_mystery_resolution_result(
             connection,
@@ -741,7 +762,9 @@ def _record_malformed_batch_notes(
     for item in batch:
         if item.source_id not in missing_source_ids:
             continue
-        if parsed.error_type == "no_valid_notes":
+        if parsed.error_type == "provider_exception":
+            error_detail = f"Skipping this source unit after a note-generation error: {parsed.raw_response or 'unknown error'}"
+        elif parsed.error_type == "no_valid_notes":
             error_detail = "The model response did not contain a usable note for this source unit."
         else:
             error_detail = (
@@ -767,6 +790,38 @@ def _record_malformed_batch_notes(
         batch_source_ids=[item.source_id for item in batch],
         invalid_item_count=parsed.invalid_item_count,
         raw_response=parsed.raw_response,
+    )
+
+
+def _record_source_skip(
+    connection: sqlite3.Connection,
+    *,
+    document_id: int,
+    source_id: int,
+    source: ParsedSource,
+    step_name: str,
+    exc: Exception,
+) -> None:
+    message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    _record_malformed_note(
+        connection,
+        document_id=document_id,
+        source_id=source_id,
+        locator=source.locator,
+        page_number=source.page_number,
+        error_type=f"{step_name.replace(' ', '_')}_exception",
+        error_detail=f"Skipping this source unit after a {step_name} error: {message}",
+        raw_response=message,
+    )
+    log_debug_event(
+        "source_skip",
+        document_id=document_id,
+        source_id=source_id,
+        source_locator=source.locator,
+        source_page_number=source.page_number,
+        step=step_name,
+        error_type=type(exc).__name__,
+        error_message=str(exc) or type(exc).__name__,
     )
 
 
@@ -801,7 +856,21 @@ def _flush_note_batch(
         source_locators=[item.source.locator for item in batch],
         batch_size=len(batch),
     ):
-        parsed = generate_batch_notes(provider, batch_inputs)
+        try:
+            parsed = generate_batch_notes(provider, batch_inputs)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            parsed = type(
+                "ParsedBatchFailure",
+                (),
+                {
+                    "notes": [],
+                    "missing_source_ids": source_ids,
+                    "raw_response": message,
+                    "error_type": "provider_exception",
+                    "invalid_item_count": 0,
+                },
+            )()
     covered_source_ids: set[int] = set()
     for generated_note in parsed.notes:
         covered_source_ids.update(generated_note.source_ids)
@@ -838,11 +907,12 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
             progress_noun = _source_progress_noun(kind)
             existing_sources = _load_existing_source_rows(connection, document_id)
             completed_source_ids = {int(row["id"]) for row in existing_sources.values() if int(row["note_count"]) > 0}
+            processed_source_ids = set(completed_source_ids)
             update_document_progress(
                 connection,
                 document_id,
                 "generating notes",
-                _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
+                _format_progress_detail(len(processed_source_ids), total_sources, progress_noun),
             )
             connection.commit()
 
@@ -907,7 +977,26 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                         total_sources=total_sources,
                         image_count=len(source.images),
                     ):
-                        image_descriptions = describe_images(provider, source)
+                        try:
+                            image_descriptions = describe_images(provider, source)
+                        except Exception as exc:
+                            _record_source_skip(
+                                connection,
+                                document_id=document_id,
+                                source_id=source_id,
+                                source=source,
+                                step_name="describing images",
+                                exc=exc,
+                            )
+                            processed_source_ids.add(source_id)
+                            update_document_progress(
+                                connection,
+                                document_id,
+                                "generating notes",
+                                _format_progress_detail(len(processed_source_ids), total_sources, progress_noun),
+                            )
+                            connection.commit()
+                            continue
                 else:
                     image_descriptions = []
                 update_document_progress(
@@ -943,6 +1032,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     batch=pending_batch_sources,
                 )
                 completed_source_ids.update(covered_source_ids)
+                processed_source_ids.update(item.source_id for item in pending_batch_sources)
                 for pending_source in pending_batch_sources:
                     if pending_source.source_id in covered_source_ids:
                         existing_sources[(pending_source.source.locator, pending_source.source.page_number)] = {
@@ -953,7 +1043,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     connection,
                     document_id,
                     "generating notes",
-                    _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
+                    _format_progress_detail(len(processed_source_ids), total_sources, progress_noun),
                 )
                 connection.commit()
                 pending_batch_sources = []
@@ -967,6 +1057,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     batch=pending_batch_sources,
                 )
                 completed_source_ids.update(covered_source_ids)
+                processed_source_ids.update(item.source_id for item in pending_batch_sources)
                 for pending_source in pending_batch_sources:
                     if pending_source.source_id in covered_source_ids:
                         existing_sources[(pending_source.source.locator, pending_source.source.page_number)] = {
@@ -977,7 +1068,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
                     connection,
                     document_id,
                     "generating notes",
-                    _format_progress_detail(len(completed_source_ids), total_sources, progress_noun),
+                    _format_progress_detail(len(processed_source_ids), total_sources, progress_noun),
                 )
                 connection.commit()
 

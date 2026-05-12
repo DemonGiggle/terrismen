@@ -5,6 +5,7 @@ from pathlib import Path
 
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db
+from terrismen.llm.base import ProviderError
 from terrismen.services.ingestion import (
     _load_existing_source_rows,
     _search_mystery_candidates,
@@ -762,6 +763,94 @@ def test_continue_document_ingestion_batches_note_generation_and_uses_image_desc
     check_connection.close()
 
 
+def test_continue_document_ingestion_skips_source_after_image_description_exception(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (2,))
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\ngamma\n",
+    )
+    connection.close()
+
+    class StubImage:
+        mime_type = "image/png"
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.parse_document",
+        lambda file_path, images_dir: (
+            "text",
+            [
+                ParsedSource(
+                    locator="Chunk 1",
+                    content="alpha content",
+                    page_number=1,
+                    images=[(images_dir / "chunk1.png", StubImage())],
+                ),
+                ParsedSource(locator="Chunk 2", content="beta content", page_number=2),
+                ParsedSource(locator="Chunk 3", content="gamma content", page_number=3),
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.describe_images",
+        lambda provider, source: (_ for _ in ()).throw(ProviderError("LLM request timed out after 600.0s")),
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.generate_batch_notes",
+        lambda provider, sources: ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id],
+                    note_text=f"{source.locator} note",
+                    keywords=source.locator.lower(),
+                    mysteries=[],
+                )
+                for source in sources
+            ],
+            missing_source_ids=[],
+        ),
+    )
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    document_row = check_connection.execute(
+        """
+        SELECT status, progress_step_name,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE document_id = documents.id) AS malformed_note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    malformed_rows = check_connection.execute(
+        "SELECT source_id, locator, error_type, error_detail FROM malformed_notes WHERE document_id = ? ORDER BY source_id",
+        (document_id,),
+    ).fetchall()
+    check_connection.close()
+
+    assert document_row["status"] == "ready"
+    assert document_row["progress_step_name"] == "finalizing document"
+    assert document_row["note_count"] == 2
+    assert document_row["malformed_note_count"] == 1
+    assert [dict(row) for row in malformed_rows] == [
+        {
+            "source_id": 1,
+            "locator": "Chunk 1",
+            "error_type": "describing_images_exception",
+            "error_detail": "Skipping this source unit after a describing images error: ProviderError: LLM request timed out after 600.0s",
+        }
+    ]
+
+
 def test_continue_document_ingestion_records_malformed_notes_and_retry_recovers_missing_sources(
     tmp_path: Path,
     monkeypatch,
@@ -907,6 +996,91 @@ def test_continue_document_ingestion_records_malformed_notes_and_retry_recovers_
         {"locator": "Chunk 1", "note_count": 1},
         {"locator": "Chunk 2", "note_count": 1},
         {"locator": "Chunk 3", "note_count": 1},
+    ]
+
+
+def test_continue_document_ingestion_skips_batch_after_note_generation_exception(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET document_note_batch_size = ? WHERE id = 1", (2,))
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\ngamma\n",
+    )
+    connection.close()
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.parse_document",
+        lambda file_path, images_dir: (
+            "text",
+            [
+                ParsedSource(locator="Chunk 1", content="alpha content", page_number=1),
+                ParsedSource(locator="Chunk 2", content="beta content", page_number=2),
+                ParsedSource(locator="Chunk 3", content="gamma content", page_number=3),
+            ],
+        ),
+    )
+
+    batch_calls: list[list[int]] = []
+
+    def fake_generate_batch_notes(provider, sources):
+        batch_calls.append([source.source_id for source in sources])
+        if len(batch_calls) == 1:
+            raise ProviderError("LLM request timed out after 600.0s")
+        return ParsedBatchNotes(
+            notes=[
+                BatchGeneratedNote(
+                    source_ids=[source.source_id for source in sources],
+                    note_text="Recovered note",
+                    keywords="recovered",
+                    mysteries=[],
+                )
+            ],
+            missing_source_ids=[],
+        )
+
+    monkeypatch.setattr("terrismen.services.ingestion.generate_batch_notes", fake_generate_batch_notes)
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    document_row = check_connection.execute(
+        """
+        SELECT status,
+               (SELECT COUNT(*) FROM notes WHERE document_id = documents.id) AS note_count,
+               (SELECT COUNT(*) FROM malformed_notes WHERE document_id = documents.id) AS malformed_note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    malformed_rows = check_connection.execute(
+        "SELECT source_id, error_type, error_detail FROM malformed_notes WHERE document_id = ? ORDER BY source_id",
+        (document_id,),
+    ).fetchall()
+    check_connection.close()
+
+    assert batch_calls == [[1, 2], [3]]
+    assert document_row["status"] == "ready"
+    assert document_row["note_count"] == 1
+    assert document_row["malformed_note_count"] == 2
+    assert [dict(row) for row in malformed_rows] == [
+        {
+            "source_id": 1,
+            "error_type": "provider_exception",
+            "error_detail": "Skipping this source unit after a note-generation error: ProviderError: LLM request timed out after 600.0s",
+        },
+        {
+            "source_id": 2,
+            "error_type": "provider_exception",
+            "error_detail": "Skipping this source unit after a note-generation error: ProviderError: LLM request timed out after 600.0s",
+        },
     ]
 
 
@@ -1300,6 +1474,99 @@ def test_continue_document_ingestion_resumes_only_open_mysteries(tmp_path: Path,
     assert open_row["status"] == "resolved"
     assert open_row["resolution_summary"] == "Now resolved"
     check_connection.close()
+
+
+def test_continue_document_ingestion_keeps_processing_after_mystery_resolution_exception(tmp_path: Path, monkeypatch) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    connection.execute("UPDATE settings SET mystery_resolution_batch_size = ? WHERE id = 1", (1,))
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'processing', progress_step_name = ?, progress_detail = ?, progress_step_index = ? WHERE id = ?",
+        ("text", "resolving mysteries", "Processing 0/2 mysteries", 6, document_id),
+    )
+    source_id = connection.execute(
+        """
+        INSERT INTO sources (document_id, locator, page_number, content, image_summary, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, '', ?, 'now')
+        """,
+        (document_id, "Page 1", 1, "content", "{}"),
+    ).lastrowid
+    note_id = connection.execute(
+        "INSERT INTO notes (document_id, source_id, note, keywords, created_at) VALUES (?, ?, ?, ?, 'now')",
+        (document_id, source_id, "note", "k"),
+    ).lastrowid
+    for question in ("open one?", "open two?"):
+        connection.execute(
+            """
+            INSERT INTO unresolved_mysteries (
+                document_id, source_id, note_id, question, reason, keywords, status,
+                resolution_summary, resolution_note_id, resolution_source_id, created_at, resolved_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'open', '', NULL, NULL, 'now', NULL)
+            """,
+            (document_id, source_id, note_id, question, "", ""),
+        )
+    connection.commit()
+    connection.close()
+
+    monkeypatch.setattr("terrismen.services.ingestion.build_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr(
+        "terrismen.services.ingestion.resolve_mysteries",
+        lambda provider, requests, include_source_excerpts=True: (_ for _ in ()).throw(
+            ProviderError("LLM request timed out after 600.0s")
+        ),
+    )
+    monkeypatch.setattr(
+        "terrismen.services.ingestion._search_mystery_candidates",
+        lambda connection, document_id, search_text, limit=8: [
+            {
+                "note_id": note_id,
+                "source_id": source_id,
+                "note": "note",
+                "keywords": "k",
+                "content": "content",
+                "locator": "Page 1",
+                "page_number": 1,
+            }
+        ],
+    )
+
+    continue_document_ingestion(config, document_id)
+
+    check_connection = connect(config.database_path)
+    document_row = check_connection.execute(
+        "SELECT status, progress_step_name FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    mystery_rows = check_connection.execute(
+        "SELECT question, status, resolution_summary FROM unresolved_mysteries WHERE document_id = ? ORDER BY id",
+        (document_id,),
+    ).fetchall()
+    check_connection.close()
+
+    assert document_row["status"] == "ready"
+    assert document_row["progress_step_name"] == "finalizing document"
+    assert [dict(row) for row in mystery_rows] == [
+        {
+            "question": "open one?",
+            "status": "open",
+            "resolution_summary": "Mystery resolution was skipped after an LLM error: ProviderError: LLM request timed out after 600.0s",
+        },
+        {
+            "question": "open two?",
+            "status": "open",
+            "resolution_summary": "Mystery resolution was skipped after an LLM error: ProviderError: LLM request timed out after 600.0s",
+        },
+    ]
 
 
 def test_retry_document_ingestion_rejects_non_failed_documents(tmp_path: Path) -> None:

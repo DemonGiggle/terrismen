@@ -26,7 +26,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Start Process" in response.text
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
-    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
+    assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
     assert '/static/app.js?v=asset-math-render-20260511' in response.text
 
 
@@ -46,7 +46,7 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert "Mystery batch size" in response.text
     assert "Mystery reference mode" in response.text
     assert response.text.index("Document note batch size") < response.text.index("Mystery batch size")
-    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
+    assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
     assert '/static/settings.js?v=asset-ui-data-root-20260511' in response.text
 
 
@@ -239,7 +239,7 @@ def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:
     assert "<main>" in response.text
     assert 'aria-label="Previous page of notes"' in response.text
     assert 'aria-label="Next page of notes"' in response.text
-    assert '/static/styles.css?v=asset-math-render-20260511' in response.text
+    assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
     assert '/static/notes.js?v=asset-math-render-20260511' in response.text
 
 

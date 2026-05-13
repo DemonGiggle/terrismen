@@ -692,6 +692,71 @@ button:focus-visible,
   color: inherit;
 }
 
+.notes-viewer .note-card:hover,
+.notes-viewer .mystery-card:hover {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.notes-viewer .note-card:hover .meta,
+.notes-viewer .mystery-card:hover .meta {
+  color: var(--muted-foreground);
+  border-color: var(--border);
+}
+
+.notes-viewer .note-card:hover .tag,
+.notes-viewer .mystery-card:hover .tag {
+  background: var(--background);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.notes-viewer .note-card:hover h3,
+.notes-viewer .mystery-card:hover h3 {
+  color: var(--foreground);
+}
+
+.notes-viewer .note-card:hover .markdown-content a,
+.notes-viewer .note-card:hover .markdown-content h3,
+.notes-viewer .note-card:hover .markdown-content h4,
+.notes-viewer .note-card:hover .markdown-content h5,
+.notes-viewer .note-card:hover .markdown-content h6,
+.notes-viewer .note-card:hover .markdown-content p,
+.notes-viewer .note-card:hover .markdown-content li,
+.notes-viewer .note-card:hover .markdown-content th,
+.notes-viewer .note-card:hover .markdown-content td,
+.notes-viewer .note-card:hover .markdown-content .mjx-container,
+.notes-viewer .mystery-card:hover .markdown-content a,
+.notes-viewer .mystery-card:hover .markdown-content h3,
+.notes-viewer .mystery-card:hover .markdown-content h4,
+.notes-viewer .mystery-card:hover .markdown-content h5,
+.notes-viewer .mystery-card:hover .markdown-content h6,
+.notes-viewer .mystery-card:hover .markdown-content p,
+.notes-viewer .mystery-card:hover .markdown-content li,
+.notes-viewer .mystery-card:hover .markdown-content th,
+.notes-viewer .mystery-card:hover .markdown-content td,
+.notes-viewer .mystery-card:hover .markdown-content .mjx-container {
+  color: var(--foreground);
+}
+
+.notes-viewer .note-card:hover .markdown-content code,
+.notes-viewer .note-card:hover .markdown-content .code-block,
+.notes-viewer .note-card:hover .markdown-content blockquote,
+.notes-viewer .note-card:hover .markdown-content th,
+.notes-viewer .note-card:hover .markdown-content td,
+.notes-viewer .mystery-card:hover .markdown-content code,
+.notes-viewer .mystery-card:hover .markdown-content .code-block,
+.notes-viewer .mystery-card:hover .markdown-content blockquote,
+.notes-viewer .mystery-card:hover .markdown-content th,
+.notes-viewer .mystery-card:hover .markdown-content td {
+  border-color: var(--border);
+}
+
+.notes-viewer .note-card:hover .markdown-content table,
+.notes-viewer .mystery-card:hover .markdown-content table {
+  color: var(--foreground);
+}
+
 .document-card.active {
   background: var(--foreground);
   color: var(--accent-foreground);

@@ -16,7 +16,12 @@ from terrismen.db import connect, init_db, row_to_dict
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
 from terrismen.services.documents import delete_document
-from terrismen.services.ingestion import continue_document_ingestion, create_document_ingestion, retry_document_ingestion
+from terrismen.services.ingestion import (
+    continue_document_ingestion,
+    create_document_ingestion,
+    resume_document_ingestion,
+    retry_document_ingestion,
+)
 from terrismen.services.notes import build_reference_label
 from terrismen.services.parsers import ParserError
 
@@ -399,6 +404,22 @@ def retry_document(
 ) -> dict[str, object]:
     try:
         payload = retry_document_ingestion(connection, document_id)
+        background_tasks.add_task(continue_document_ingestion, config, document_id)
+        return payload
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail == "Document not found" else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@app.post("/api/documents/{document_id}/resume")
+def resume_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    connection=Depends(get_connection),
+) -> dict[str, object]:
+    try:
+        payload = resume_document_ingestion(connection, document_id)
         background_tasks.add_task(continue_document_ingestion, config, document_id)
         return payload
     except ValueError as exc:

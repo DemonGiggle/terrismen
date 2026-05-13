@@ -15,6 +15,7 @@ from terrismen.services.ingestion import (
     load_document_note_batch_size,
     load_mystery_resolution_batch_size,
     load_mystery_resolution_reference_mode,
+    resume_document_ingestion,
     retry_document_ingestion,
 )
 from terrismen.services.notes import (
@@ -1588,5 +1589,68 @@ def test_retry_document_ingestion_rejects_non_failed_documents(tmp_path: Path) -
         assert str(exc) == "Only failed documents or ready documents with malformed notes can be retried"
     else:
         raise AssertionError("retry_document_ingestion should reject non-failed documents")
+
+    connection.close()
+
+
+def test_resume_document_ingestion_normalizes_finalizing_stage_for_processing_documents(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET kind = ?, status = 'processing', progress_step_name = ?, progress_detail = ?, progress_step_index = ? WHERE id = ?",
+        ("text", "finalizing document", "Waiting to wrap up", 7, document_id),
+    )
+    connection.commit()
+
+    payload = resume_document_ingestion(connection, document_id)
+
+    row = connection.execute(
+        "SELECT status, progress_step_name, progress_detail, error FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+
+    assert payload["status"] == "processing"
+    assert payload["progress_step_name"] == "resolving mysteries"
+    assert payload["progress_detail"] == ""
+    assert row["status"] == "processing"
+    assert row["progress_step_name"] == "resolving mysteries"
+    assert row["progress_detail"] == ""
+    assert row["error"] == ""
+    connection.close()
+
+
+def test_resume_document_ingestion_rejects_non_processing_documents(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+    configure_provider(connection)
+    document_id = create_document_ingestion(
+        connection,
+        config,
+        original_name="notes.txt",
+        media_type="text/plain",
+        blob=b"alpha\nbeta\n",
+    )
+    connection.execute(
+        "UPDATE documents SET status = 'ready', progress_step_name = ? WHERE id = ?",
+        ("finalizing document", document_id),
+    )
+    connection.commit()
+
+    try:
+        resume_document_ingestion(connection, document_id)
+    except ValueError as exc:
+        assert str(exc) == "Only processing documents can be force resumed"
+    else:
+        raise AssertionError("resume_document_ingestion should reject non-processing documents")
 
     connection.close()

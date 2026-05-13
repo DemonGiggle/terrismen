@@ -27,7 +27,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
     assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
-    assert '/static/app.js?v=asset-math-render-20260511' in response.text
+    assert '/static/app.js?v=asset-force-resume-20260513' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
@@ -224,6 +224,57 @@ def test_retry_document_endpoint_rejects_non_failed_document(tmp_path, monkeypat
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Only failed documents or ready documents with malformed notes can be retried"
+
+
+def test_resume_document_endpoint_restarts_processing_document(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "continue_document_ingestion", lambda config, document_id: None)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "processing", "generating notes", "Processing 1/3 sections", 5, 7, "", "now"),
+    ).lastrowid
+    connection.commit()
+    connection.close()
+
+    response = client.post(f"/api/documents/{document_id}/resume")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "processing"
+    assert payload["progress_step_name"] == "generating notes"
+    assert payload["progress_detail"] == ""
+
+
+def test_resume_document_endpoint_rejects_non_processing_document(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "continue_document_ingestion", lambda config, document_id: None)
+    client = TestClient(app_module.app)
+    connection = app_module.connect(app_module.config.database_path)
+    document_id = connection.execute(
+        """
+        INSERT INTO documents (
+            original_name, stored_path, media_type, kind, status, progress_step_name, progress_detail, progress_step_index,
+            progress_step_count, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("notes.txt", "/tmp/notes.txt", "text/plain", "text", "ready", "finalizing document", "", 7, 7, "", "now"),
+    ).lastrowid
+    connection.commit()
+    connection.close()
+
+    response = client.post(f"/api/documents/{document_id}/resume")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only processing documents can be force resumed"
 
 
 def test_notes_page_serves_static_page(tmp_path, monkeypatch) -> None:

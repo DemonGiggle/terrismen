@@ -581,39 +581,14 @@ def continue_document_ingestion(config: AppConfig, document_id: int) -> None:
         _continue_document_ingestion(connection, config, document_id=document_id)
 
 
-def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
-    row = connection.execute(
-        """
-        SELECT id, status, progress_step_name,
-               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count
-        FROM documents
-        WHERE id = ?
-        """,
-        (document_id,),
-    ).fetchone()
-    if row is None:
-        raise ValueError("Document not found")
-    malformed_note_count = int(row["malformed_note_count"])
-    if row["status"] == "failed":
-        resume_step = row["progress_step_name"] or "parsing document"
-        if resume_step in {"resolving mysteries", "finalizing document"}:
-            resume_step = "resolving mysteries"
-        elif resume_step == "parsing document":
-            resume_step = "parsing document"
-            _delete_document_outputs(connection, document_id)
-            connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
-    elif row["status"] == "ready" and malformed_note_count > 0:
-        resume_step = "generating notes"
-    else:
-        raise ValueError("Only failed documents or ready documents with malformed notes can be retried")
+def _normalize_resume_step(step_name: object) -> str:
+    resume_step = str(step_name or "parsing document")
+    if resume_step in {"resolving mysteries", "finalizing document"}:
+        return "resolving mysteries"
+    return resume_step
 
-    update_document_progress(connection, document_id, resume_step)
-    connection.execute(
-        "UPDATE documents SET status = 'processing', error = '' WHERE id = ?",
-        (document_id,),
-    )
-    connection.commit()
 
+def _load_document_ingestion_payload(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
     document = connection.execute(
         """
         SELECT id, original_name, kind, status, progress_step_name, progress_detail, progress_step_index, progress_step_count,
@@ -629,6 +604,58 @@ def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -
         (document_id,),
     ).fetchone()
     return dict(document)
+
+
+def retry_document_ingestion(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT id, status, progress_step_name,
+               (SELECT COUNT(*) FROM malformed_notes WHERE malformed_notes.document_id = documents.id) AS malformed_note_count
+        FROM documents
+        WHERE id = ?
+        """,
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Document not found")
+    malformed_note_count = int(row["malformed_note_count"])
+    if row["status"] == "failed":
+        resume_step = _normalize_resume_step(row["progress_step_name"])
+        if resume_step == "parsing document":
+            resume_step = "parsing document"
+            _delete_document_outputs(connection, document_id)
+            connection.execute("UPDATE documents SET kind = '' WHERE id = ?", (document_id,))
+    elif row["status"] == "ready" and malformed_note_count > 0:
+        resume_step = "generating notes"
+    else:
+        raise ValueError("Only failed documents or ready documents with malformed notes can be retried")
+
+    update_document_progress(connection, document_id, resume_step)
+    connection.execute(
+        "UPDATE documents SET status = 'processing', error = '' WHERE id = ?",
+        (document_id,),
+    )
+    connection.commit()
+    return _load_document_ingestion_payload(connection, document_id)
+
+
+def resume_document_ingestion(connection: sqlite3.Connection, document_id: int) -> dict[str, object]:
+    row = connection.execute(
+        "SELECT id, status, progress_step_name FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Document not found")
+    if row["status"] != "processing":
+        raise ValueError("Only processing documents can be force resumed")
+
+    update_document_progress(connection, document_id, _normalize_resume_step(row["progress_step_name"]))
+    connection.execute(
+        "UPDATE documents SET status = 'processing', error = '' WHERE id = ?",
+        (document_id,),
+    )
+    connection.commit()
+    return _load_document_ingestion_payload(connection, document_id)
 
 
 def _load_existing_source_rows(connection: sqlite3.Connection, document_id: int) -> dict[tuple[str, int | None], dict[str, object]]:

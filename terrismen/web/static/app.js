@@ -12,6 +12,7 @@ const state = {
   chatRequestTimer: null,
   chatRequestInFlight: false,
   deletingDocumentIds: new Set(),
+  resumingDocumentIds: new Set(),
 };
 
 const elements = {
@@ -118,6 +119,11 @@ function renderDocuments() {
             ${
               documentItem.status === "failed" || (documentItem.status === "ready" && documentItem.malformed_note_count)
                 ? `<button class="secondary compact-action" type="button" data-document-action="retry">Retry</button>`
+                : ""
+            }
+            ${
+              documentItem.status === "processing"
+                ? `<button class="secondary compact-action" type="button" data-document-action="resume" ${state.resumingDocumentIds.has(documentItem.id) ? "disabled" : ""}>${state.resumingDocumentIds.has(documentItem.id) ? "Resuming..." : "Force resume"}</button>`
                 : ""
             }
             <button class="secondary compact-action" type="button" data-document-action="delete" ${state.deletingDocumentIds.has(documentItem.id) ? "disabled" : ""}>${state.deletingDocumentIds.has(documentItem.id) ? "Deleting..." : "Delete"}</button>
@@ -290,6 +296,29 @@ async function retryDocument(documentId) {
     setStatus(`Restarted ${label}`);
   } catch (error) {
     setStatus(error.message);
+  }
+}
+
+async function resumeDocument(documentId) {
+  const documentItem = state.documents.find((item) => item.id === documentId);
+  const label = documentItem?.original_name || "this document";
+  if (!window.confirm(`Force resume ${label}? Use this only when processing got stuck after a restart.`)) {
+    return;
+  }
+
+  state.resumingDocumentIds.add(documentId);
+  renderDocuments();
+  setStatus(`Resuming ${label}...`);
+  try {
+    const payload = await api(`/api/documents/${documentId}/resume`, { method: "POST" });
+    state.selectedDocumentId = payload.id;
+    await loadDocuments();
+    setStatus(`Resumed ${label}`);
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    state.resumingDocumentIds.delete(documentId);
+    renderDocuments();
   }
 }
 
@@ -498,6 +527,8 @@ elements.documents.addEventListener("click", async (event) => {
       await deleteDocument(Number(target.dataset.documentId));
     } else if (action.dataset.documentAction === "retry") {
       await retryDocument(Number(target.dataset.documentId));
+    } else if (action.dataset.documentAction === "resume") {
+      await resumeDocument(Number(target.dataset.documentId));
     }
     return;
   }

@@ -79,6 +79,25 @@ def test_ollama_non_gpt_oss_models_use_boolean_think(monkeypatch) -> None:
     assert captured["json"]["think"] is True
 
 
+def test_ollama_non_gpt_oss_models_send_false_when_think_is_off(monkeypatch) -> None:
+    settings = build_settings()
+    settings.provider_type = "ollama"
+    settings.model = "deepseek-r1"
+    settings.think_level = "off"
+    provider = OllamaProvider(settings)
+    captured: dict[str, object] = {}
+
+    def fake_post(endpoint, headers=None, json=None):
+        captured["json"] = json
+        return FakeResponse({"message": {"content": "ok"}})
+
+    monkeypatch.setattr(provider._client, "post", fake_post)
+
+    provider.complete("system prompt", "user prompt")
+
+    assert captured["json"]["think"] is False
+
+
 def test_ollama_gpt_oss_models_use_level_think(monkeypatch) -> None:
     settings = build_settings()
     settings.provider_type = "ollama"

@@ -18,6 +18,7 @@ class OllamaProvider(BaseProvider):
     def _think_payload(self) -> bool | str | None:
         think_level = normalize_think_level(self.settings.think_level)
         if self.settings.model.strip().lower().startswith("gpt-oss"):
+            # GPT-OSS expects level strings; omit the field instead of sending an unsupported boolean.
             if think_level == "off":
                 return None
             return think_level

@@ -7,7 +7,7 @@
 All prompt constants flow through `BaseProvider.complete(system_prompt, user_prompt, ...)`.
 
 - `terrismen/llm/openai_compatible.py` sends `system_prompt` as `{"role": "system", "content": system_prompt}` to `/v1/chat/completions`.
-- `terrismen/llm/ollama.py` sends `system_prompt` as `{"role": "system", "content": system_prompt}` to `/api/chat`.
+- `terrismen/llm/ollama.py` sends `system_prompt` as `{"role": "system", "content": system_prompt}` to `/api/chat`, and may include a top-level `think` field when Ollama thinking is enabled in Settings.
 
 That means the prompt constants below are not just internal strings; each one becomes the system prompt for a model call.
 

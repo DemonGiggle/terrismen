@@ -4,7 +4,7 @@ import base64
 
 import httpx
 
-from terrismen.llm.base import BaseProvider, ImageInput, ProviderError
+from terrismen.llm.base import BaseProvider, ImageInput, ProviderError, normalize_think_level
 
 
 class OllamaProvider(BaseProvider):
@@ -15,19 +15,32 @@ class OllamaProvider(BaseProvider):
     def _endpoint(self) -> str:
         return f"{self.settings.base_url.rstrip('/')}/api/chat"
 
+    def _think_payload(self) -> bool | str | None:
+        think_level = normalize_think_level(self.settings.think_level)
+        if self.settings.model.strip().lower().startswith("gpt-oss"):
+            # GPT-OSS expects level strings; omit the field instead of sending an unsupported boolean.
+            if think_level == "off":
+                return None
+            return think_level
+        return think_level != "off"
+
     def complete(self, system_prompt: str, user_prompt: str, *, images: list[ImageInput] | None = None) -> str:
         image_payload = [base64.b64encode(image.data).decode("ascii") for image in images or []]
+        payload: dict[str, object] = {
+            "model": self.settings.model,
+            "stream": False,
+            "options": {"temperature": self.settings.temperature},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt, "images": image_payload},
+            ],
+        }
+        think_payload = self._think_payload()
+        if think_payload is not None:
+            payload["think"] = think_payload
         response = self._post_json(
             self._endpoint(),
-            payload={
-                "model": self.settings.model,
-                "stream": False,
-                "options": {"temperature": self.settings.temperature},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt, "images": image_payload},
-                ],
-            },
+            payload=payload,
             image_count=len(image_payload),
         )
         if response.status_code >= 400:

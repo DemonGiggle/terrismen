@@ -69,6 +69,16 @@
               <input name="llm_timeout_seconds" type="number" step="30" min="60" max="3600" value="600">
             </label>
             <label>
+              Ollama think level
+              <select name="think_level">
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <p class="meta" id="think-level-hint">Available only for Ollama. OpenAI-compatible providers keep their current request shape.</p>
+            <label>
               Document note batch size
               <input name="document_note_batch_size" type="number" step="1" min="1" max="20" value="5">
             </label>
@@ -92,6 +102,6 @@
       </main>
     </div>
 
-    <script src="/static/settings.js?v=asset-ui-data-root-20260511" type="module"></script>
+    <script src="/static/settings.js?v=asset-think-level-20260514" type="module"></script>
   </body>
 </html>

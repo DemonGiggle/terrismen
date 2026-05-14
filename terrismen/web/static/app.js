@@ -1,4 +1,4 @@
-import { api, escapeHtml, getSettingsState, renderMarkdown, renderPlainText, summarizeSettings, typesetMath } from "./shared.js?v=asset-math-render-20260511";
+import { api, escapeHtml, getSettingsState, renderMarkdown, renderPlainText, summarizeSettings, typesetMath } from "./shared.js?v=asset-think-level-20260514";
 
 const state = {
   documents: [],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Literal, cast
 
 import httpx
 
@@ -11,6 +12,19 @@ from terrismen.debug import current_llm_operation_context, find_llm_caller, log_
 
 class ProviderError(RuntimeError):
     pass
+
+
+ThinkLevel = Literal["off", "low", "medium", "high"]
+DEFAULT_THINK_LEVEL: ThinkLevel = "off"
+VALID_THINK_LEVELS = frozenset({"off", "low", "medium", "high"})
+
+
+def normalize_think_level(value: object) -> ThinkLevel:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in VALID_THINK_LEVELS:
+            return cast(ThinkLevel, normalized)
+    return DEFAULT_THINK_LEVEL
 
 
 @dataclass(slots=True)
@@ -27,6 +41,7 @@ class ProviderSettings:
     api_key: str
     temperature: float
     llm_timeout_seconds: float
+    think_level: ThinkLevel = DEFAULT_THINK_LEVEL
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.model and self.provider_type)
@@ -53,6 +68,7 @@ class BaseProvider(ABC):
             "model": self.settings.model,
             "endpoint": endpoint,
             "timeout_seconds": self.settings.llm_timeout_seconds,
+            "think_level": self.settings.think_level,
             "prompt_chars_system": len(str(payload.get("messages", [{}])[0].get("content", ""))) if payload.get("messages") else 0,
             "prompt_chars_user": len(str(payload.get("messages", [{}, {}])[1].get("content", ""))) if payload.get("messages") else 0,
             "image_count": image_count,

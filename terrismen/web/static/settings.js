@@ -1,4 +1,4 @@
-import { api, getSettingsState, summarizeSettings } from "./shared.js?v=asset-ui-fixes-20260510";
+import { api, getSettingsState, summarizeSettings } from "./shared.js?v=asset-think-level-20260514";
 
 const elements = {
   status: document.querySelector("#status-pill"),
@@ -7,6 +7,7 @@ const elements = {
   settingsIndicator: document.querySelector("#settings-indicator"),
   dataRootSummary: document.querySelector("#data-root-summary"),
   dataRootHint: document.querySelector("#data-root-hint"),
+  thinkLevelHint: document.querySelector("#think-level-hint"),
 };
 
 function setStatus(text) {
@@ -33,10 +34,20 @@ function populateSettingsForm(settings) {
   elements.settingsForm.api_key.value = settings.api_key || "";
   elements.settingsForm.temperature.value = settings.temperature ?? 0.2;
   elements.settingsForm.llm_timeout_seconds.value = settings.llm_timeout_seconds ?? 600;
+  elements.settingsForm.think_level.value = settings.think_level || "off";
   elements.settingsForm.document_note_batch_size.value = settings.document_note_batch_size ?? 5;
   elements.settingsForm.mystery_resolution_batch_size.value = settings.mystery_resolution_batch_size ?? 5;
   elements.settingsForm.mystery_resolution_reference_mode.value =
     settings.mystery_resolution_reference_mode || "notes_only";
+  syncThinkLevelControl();
+}
+
+function syncThinkLevelControl() {
+  const isOllama = elements.settingsForm.provider_type.value === "ollama";
+  elements.settingsForm.think_level.disabled = !isOllama;
+  elements.thinkLevelHint.textContent = isOllama
+    ? "Ollama only. Most models treat any non-off value as thinking enabled; GPT-OSS honors low, medium, and high levels."
+    : "Available only for Ollama. OpenAI-compatible providers keep their current request shape.";
 }
 
 async function loadSettings() {
@@ -60,6 +71,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
         api_key: formData.get("api_key"),
         temperature: Number(formData.get("temperature")),
         llm_timeout_seconds: Number(formData.get("llm_timeout_seconds")),
+        think_level: elements.settingsForm.think_level.value,
         document_note_batch_size: Number(formData.get("document_note_batch_size")),
         mystery_resolution_batch_size: Number(formData.get("mystery_resolution_batch_size")),
         mystery_resolution_reference_mode: formData.get("mystery_resolution_reference_mode"),
@@ -72,6 +84,8 @@ elements.settingsForm.addEventListener("submit", async (event) => {
     setStatus(error.message);
   }
 });
+
+elements.settingsForm.provider_type.addEventListener("change", syncThinkLevelControl);
 
 try {
   await loadSettings();

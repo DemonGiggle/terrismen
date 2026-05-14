@@ -12,6 +12,7 @@ from terrismen.config import AppConfig
 from terrismen.debug import llm_operation_context, log_debug_event
 from terrismen.db import connect, utcnow
 from terrismen.llm import ProviderSettings, build_provider
+from terrismen.llm.base import normalize_think_level
 from terrismen.llm.base import ProviderError
 from terrismen.services.notes import (
     BatchNoteSourceInput,
@@ -69,7 +70,7 @@ def allowed_extension(name: str) -> bool:
 
 def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
     row = connection.execute(
-        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds FROM settings WHERE id = 1"
+        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level FROM settings WHERE id = 1"
     ).fetchone()
     return ProviderSettings(
         provider_type=row["provider_type"],
@@ -78,6 +79,7 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
         api_key=row["api_key"],
         temperature=row["temperature"],
         llm_timeout_seconds=row["llm_timeout_seconds"],
+        think_level=normalize_think_level(row["think_level"]),
     )
 
 

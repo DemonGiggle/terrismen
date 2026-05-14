@@ -15,6 +15,7 @@ from terrismen.services.ingestion import (
     load_document_note_batch_size,
     load_mystery_resolution_batch_size,
     load_mystery_resolution_reference_mode,
+    load_provider_settings,
     resume_document_ingestion,
     retry_document_ingestion,
 )
@@ -123,6 +124,20 @@ def test_load_mystery_resolution_reference_mode_uses_default_valid_and_invalid_v
     connection.execute("UPDATE settings SET mystery_resolution_reference_mode = ? WHERE id = 1", ("bad-value",))
     connection.commit()
     assert load_mystery_resolution_reference_mode(connection) == "notes_only"
+    connection.close()
+
+
+def test_load_provider_settings_normalizes_invalid_think_level(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    connection.execute("UPDATE settings SET think_level = ? WHERE id = 1", ("unexpected",))
+    connection.commit()
+
+    settings = load_provider_settings(connection)
+
+    assert settings.think_level == "off"
     connection.close()
 
 

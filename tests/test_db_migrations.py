@@ -186,6 +186,48 @@ def build_version_2_database_with_metadata(database_path: Path) -> None:
         connection.commit()
 
 
+def build_version_4_database_with_metadata(database_path: Path) -> None:
+    build_version_2_database_with_metadata(database_path)
+    with connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS note_sources (
+                note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                ref_rank INTEGER NOT NULL,
+                PRIMARY KEY (note_id, source_id),
+                CHECK (ref_rank >= 1)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO note_sources (note_id, source_id, ref_rank)
+            SELECT id, source_id, 1
+            FROM notes
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS malformed_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                locator TEXT NOT NULL,
+                page_number INTEGER,
+                error_type TEXT NOT NULL DEFAULT '',
+                error_detail TEXT NOT NULL DEFAULT '',
+                raw_response TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_id)
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+
+
 def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     database_path = tmp_path / "fresh.sqlite3"
 
@@ -194,15 +236,16 @@ def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
     with connect(database_path) as connection:
         settings_count = connection.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
-        document_note_batch_size = connection.execute(
-            "SELECT document_note_batch_size FROM settings WHERE id = 1"
-        ).fetchone()[0]
+        settings_row = connection.execute(
+            "SELECT document_note_batch_size, think_level FROM settings WHERE id = 1"
+        ).fetchone()
         malformed_notes_exists = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'malformed_notes'"
         ).fetchone()
 
     assert settings_count == 1
-    assert document_note_batch_size == 5
+    assert settings_row["document_note_batch_size"] == 5
+    assert settings_row["think_level"] == "off"
     assert malformed_notes_exists is not None
 
 
@@ -232,8 +275,8 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
             ("legacykeyword",),
         ).fetchall()
         document_note_batch_size = connection.execute(
-            "SELECT document_note_batch_size FROM settings WHERE id = 1"
-        ).fetchone()[0]
+            "SELECT document_note_batch_size, think_level FROM settings WHERE id = 1"
+        ).fetchone()
         connection.execute(
             """
             INSERT INTO notes (document_id, source_id, note, keywords, created_at)
@@ -249,7 +292,8 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
 
     assert len(rebuilt_hits) == 1
     assert len(trigger_hits) == 1
-    assert document_note_batch_size == 5
+    assert document_note_batch_size["document_note_batch_size"] == 5
+    assert document_note_batch_size["think_level"] == "off"
 
 
 def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp_path) -> None:
@@ -262,7 +306,7 @@ def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp
     with connect(database_path) as connection:
         row = connection.execute(
             """
-            SELECT document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode
+            SELECT document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode, think_level
             FROM settings
             WHERE id = 1
             """
@@ -271,6 +315,20 @@ def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp
     assert row["document_note_batch_size"] == 5
     assert row["mystery_resolution_batch_size"] == 5
     assert row["mystery_resolution_reference_mode"] == "notes_only"
+    assert row["think_level"] == "off"
+
+
+def test_init_db_migrates_version_4_database_to_add_think_level(tmp_path) -> None:
+    database_path = tmp_path / "version4.sqlite3"
+    build_version_4_database_with_metadata(database_path)
+
+    init_db(database_path)
+
+    assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
+    with connect(database_path) as connection:
+        row = connection.execute("SELECT think_level FROM settings WHERE id = 1").fetchone()
+
+    assert row["think_level"] == "off"
 
 
 def test_init_db_migrates_version_2_database_to_add_note_sources_and_backfill(tmp_path) -> None:

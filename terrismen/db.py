@@ -498,11 +498,21 @@ def _migration_0004_add_malformed_notes(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_0005_add_think_level(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        ALTER TABLE settings
+        ADD COLUMN think_level TEXT NOT NULL DEFAULT 'off'
+        """
+    )
+
+
 MIGRATIONS: dict[int, Migration] = {
     1: _migration_0001_initial_schema,
     2: _migration_0002_add_document_note_batch_size,
     3: _migration_0003_add_note_sources,
     4: _migration_0004_add_malformed_notes,
+    5: _migration_0005_add_think_level,
 }
 
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)

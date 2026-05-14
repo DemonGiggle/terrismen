@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from terrismen.config import AppConfig, data_root_is_env_controlled, load_config, switch_data_root
 from terrismen.debug import configure_debug_logging
 from terrismen.db import connect, init_db, row_to_dict
+from terrismen.llm.base import normalize_think_level
 from terrismen.models import ChatRequest, ProviderSettingsPayload
 from terrismen.services.chat import continue_chat_request, create_chat_request, get_chat_request
 from terrismen.services.documents import delete_document
@@ -56,6 +57,8 @@ def serialize_message(row) -> dict[str, object]:
 
 def serialize_settings(row) -> dict[str, object]:
     payload = row_to_dict(row) or {}
+    if "think_level" in payload:
+        payload["think_level"] = normalize_think_level(payload["think_level"])
     payload["data_root"] = config.data_root.as_posix()
     payload["data_root_locked"] = data_root_is_env_controlled()
     return payload
@@ -153,7 +156,7 @@ def health() -> dict[str, str]:
 def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
         """
-        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, document_note_batch_size,
+        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level, document_note_batch_size,
                mystery_resolution_batch_size, mystery_resolution_reference_mode
         FROM settings
         WHERE id = 1
@@ -179,7 +182,7 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
         active_connection.execute(
             """
             UPDATE settings
-            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?,
+            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?, think_level = ?,
                 document_note_batch_size = ?, mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
             WHERE id = 1
             """,
@@ -190,6 +193,7 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
                 payload.api_key,
                 payload.temperature,
                 payload.llm_timeout_seconds,
+                payload.think_level,
                 payload.document_note_batch_size,
                 payload.mystery_resolution_batch_size,
                 payload.mystery_resolution_reference_mode,
@@ -198,7 +202,7 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
         active_connection.commit()
         row = active_connection.execute(
             """
-            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, document_note_batch_size,
+            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level, document_note_batch_size,
                    mystery_resolution_batch_size, mystery_resolution_reference_mode
             FROM settings
             WHERE id = 1

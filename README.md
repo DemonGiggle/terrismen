@@ -11,6 +11,7 @@
 - Browser UI with a dedicated settings page, guided upload workflow, compact note browsing, and grounded chat
 - OpenAI-compatible provider support
 - Native Ollama support
+- Ollama think-level control in Settings for supported models
 - Step-by-step document ingestion progress in the UI while uploads are processing
 - Step-by-step chat request progress for retrieval and answer generation
 - PDF parsing with exact page references
@@ -118,6 +119,18 @@ Current behavior:
 - Model: `llama3.2-vision` or another installed model
 - API key: leave blank
 - Timeout: default `600` seconds, configurable in Settings
+- Think level: `off`, `low`, `medium`, or `high`
+
+## Ollama think level setting
+
+The Settings page stores an Ollama-only `think_level` control:
+
+- `off` disables thinking for most Ollama models
+- `low`, `medium`, and `high` request progressively more reasoning where the model supports it
+- non-GPT-OSS models generally treat any non-`off` value as "thinking enabled"
+- GPT-OSS models honor the documented `low` / `medium` / `high` levels and may not fully disable traces
+
+This setting controls **reasoning mode**, not elapsed wall-clock time.
 
 ## Notes on source references
 

@@ -29,6 +29,7 @@ def build_settings() -> ProviderSettings:
         api_key="",
         temperature=0.2,
         llm_timeout_seconds=12.0,
+        think_level="off",
     )
 
 

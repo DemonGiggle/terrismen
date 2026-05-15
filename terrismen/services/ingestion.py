@@ -68,9 +68,19 @@ def allowed_extension(name: str) -> bool:
     return file_extension(name) in {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt", ".md", ".text"}
 
 
-def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
+THINK_LEVEL_COLUMNS = frozenset({"ingestion_think_level", "chat_think_level"})
+
+
+def _load_provider_settings(connection: sqlite3.Connection, think_level_column: str) -> ProviderSettings:
+    if think_level_column not in THINK_LEVEL_COLUMNS:
+        raise ValueError(f"Unsupported think level column: {think_level_column}")
     row = connection.execute(
-        "SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level FROM settings WHERE id = 1"
+        f"""
+        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds,
+               {think_level_column} AS think_level
+        FROM settings
+        WHERE id = 1
+        """
     ).fetchone()
     return ProviderSettings(
         provider_type=row["provider_type"],
@@ -81,6 +91,14 @@ def load_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
         llm_timeout_seconds=row["llm_timeout_seconds"],
         think_level=normalize_think_level(row["think_level"]),
     )
+
+
+def load_ingestion_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
+    return _load_provider_settings(connection, "ingestion_think_level")
+
+
+def load_chat_provider_settings(connection: sqlite3.Connection) -> ProviderSettings:
+    return _load_provider_settings(connection, "chat_think_level")
 
 
 def normalize_mystery_resolution_batch_size(value: object) -> int:
@@ -545,7 +563,7 @@ def create_document_ingestion(
     media_type: str,
     blob: bytes,
 ) -> int:
-    settings = load_provider_settings(connection)
+    settings = load_ingestion_provider_settings(connection)
     if not settings.is_configured():
         raise ProviderError("Configure an OpenAI-compatible or Ollama provider before uploading documents.")
     if not allowed_extension(original_name):
@@ -923,7 +941,7 @@ def _continue_document_ingestion(connection: sqlite3.Connection, config: AppConf
             return
         original_name = document_row["original_name"]
         stored_path = Path(document_row["stored_path"])
-        settings = load_provider_settings(connection)
+        settings = load_ingestion_provider_settings(connection)
         provider = build_provider(settings)
         resume_step = document_row["progress_step_name"] or "parsing document"
         if resume_step != "resolving mysteries":

@@ -57,8 +57,9 @@ def serialize_message(row) -> dict[str, object]:
 
 def serialize_settings(row) -> dict[str, object]:
     payload = row_to_dict(row) or {}
-    if "think_level" in payload:
-        payload["think_level"] = normalize_think_level(payload["think_level"])
+    for field_name in ("ingestion_think_level", "chat_think_level"):
+        if field_name in payload:
+            payload[field_name] = normalize_think_level(payload[field_name])
     payload["data_root"] = config.data_root.as_posix()
     payload["data_root_locked"] = data_root_is_env_controlled()
     return payload
@@ -156,8 +157,8 @@ def health() -> dict[str, str]:
 def get_settings(connection=Depends(get_connection)) -> dict[str, object]:
     row = connection.execute(
         """
-        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level, document_note_batch_size,
-               mystery_resolution_batch_size, mystery_resolution_reference_mode
+        SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, ingestion_think_level,
+               chat_think_level, document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode
         FROM settings
         WHERE id = 1
         """
@@ -182,8 +183,9 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
         active_connection.execute(
             """
             UPDATE settings
-            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?, think_level = ?,
-                document_note_batch_size = ?, mystery_resolution_batch_size = ?, mystery_resolution_reference_mode = ?
+            SET provider_type = ?, base_url = ?, model = ?, api_key = ?, temperature = ?, llm_timeout_seconds = ?,
+                ingestion_think_level = ?, chat_think_level = ?, document_note_batch_size = ?, mystery_resolution_batch_size = ?,
+                mystery_resolution_reference_mode = ?
             WHERE id = 1
             """,
             (
@@ -193,7 +195,8 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
                 payload.api_key,
                 payload.temperature,
                 payload.llm_timeout_seconds,
-                payload.think_level,
+                payload.ingestion_think_level,
+                payload.chat_think_level,
                 payload.document_note_batch_size,
                 payload.mystery_resolution_batch_size,
                 payload.mystery_resolution_reference_mode,
@@ -202,8 +205,8 @@ def update_settings(payload: ProviderSettingsPayload, connection=Depends(get_con
         active_connection.commit()
         row = active_connection.execute(
             """
-            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, think_level, document_note_batch_size,
-                   mystery_resolution_batch_size, mystery_resolution_reference_mode
+            SELECT provider_type, base_url, model, api_key, temperature, llm_timeout_seconds, ingestion_think_level,
+                   chat_think_level, document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode
             FROM settings
             WHERE id = 1
             """

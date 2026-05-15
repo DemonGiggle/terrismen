@@ -1,4 +1,4 @@
-import { api, escapeHtml, getSettingsState, renderMarkdown, renderPlainText, summarizeSettings, typesetMath } from "./shared.js?v=asset-think-level-20260514";
+import { api, escapeHtml, getSettingsState, renderMarkdown, renderPlainText, summarizeSettings, typesetMath } from "./shared.js?v=asset-split-think-level-20260515";
 
 const state = {
   documents: [],

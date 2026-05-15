@@ -27,7 +27,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
     assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
-    assert '/static/app.js?v=asset-force-resume-20260513' in response.text
+    assert '/static/app.js?v=asset-split-think-level-20260515' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
@@ -42,13 +42,14 @@ def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:
     assert "Data folder" in response.text
     assert "Current data path" in response.text
     assert "LLM timeout (seconds)" in response.text
-    assert "Ollama think level" in response.text
+    assert "Ollama ingestion think level" in response.text
+    assert "Ollama chat think level" in response.text
     assert "Document note batch size" in response.text
     assert "Mystery batch size" in response.text
     assert "Mystery reference mode" in response.text
     assert response.text.index("Document note batch size") < response.text.index("Mystery batch size")
     assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
-    assert '/static/settings.js?v=asset-think-level-20260514' in response.text
+    assert '/static/settings.js?v=asset-split-think-level-20260515' in response.text
 
 
 def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
@@ -65,7 +66,8 @@ def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
             "api_key": "",
             "temperature": 0.2,
             "llm_timeout_seconds": 900,
-            "think_level": "medium",
+            "ingestion_think_level": "medium",
+            "chat_think_level": "low",
             "document_note_batch_size": 6,
             "mystery_resolution_batch_size": 7,
             "mystery_resolution_reference_mode": "notes_and_sources",
@@ -77,10 +79,38 @@ def test_settings_api_round_trips_timeout(tmp_path, monkeypatch) -> None:
     assert payload["data_root"] == str(tmp_path)
     assert payload["data_root_locked"] is True
     assert payload["llm_timeout_seconds"] == 900
-    assert payload["think_level"] == "medium"
+    assert payload["ingestion_think_level"] == "medium"
+    assert payload["chat_think_level"] == "low"
     assert payload["document_note_batch_size"] == 6
     assert payload["mystery_resolution_batch_size"] == 7
     assert payload["mystery_resolution_reference_mode"] == "notes_and_sources"
+
+
+def test_settings_api_accepts_legacy_think_level_for_both_workflows(tmp_path, monkeypatch) -> None:
+    app_module = load_app_module(tmp_path, monkeypatch)
+    client = TestClient(app_module.app)
+
+    response = client.put(
+        "/api/settings",
+        json={
+            "data_root": str(tmp_path),
+            "provider_type": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.2",
+            "api_key": "",
+            "temperature": 0.2,
+            "llm_timeout_seconds": 900,
+            "think_level": "high",
+            "document_note_batch_size": 6,
+            "mystery_resolution_batch_size": 7,
+            "mystery_resolution_reference_mode": "notes_and_sources",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ingestion_think_level"] == "high"
+    assert payload["chat_think_level"] == "high"
 
 
 def test_settings_api_rejects_invalid_document_note_batch_size(tmp_path, monkeypatch) -> None:
@@ -126,7 +156,7 @@ def test_settings_api_rejects_invalid_mystery_batch_size(tmp_path, monkeypatch) 
     assert response.status_code == 422
 
 
-def test_settings_api_rejects_invalid_think_level(tmp_path, monkeypatch) -> None:
+def test_settings_api_rejects_invalid_chat_think_level(tmp_path, monkeypatch) -> None:
     app_module = load_app_module(tmp_path, monkeypatch)
     client = TestClient(app_module.app)
 
@@ -140,7 +170,7 @@ def test_settings_api_rejects_invalid_think_level(tmp_path, monkeypatch) -> None
             "api_key": "",
             "temperature": 0.2,
             "llm_timeout_seconds": 900,
-            "think_level": "max",
+            "chat_think_level": "max",
             "document_note_batch_size": 5,
         },
     )

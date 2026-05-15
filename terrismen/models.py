@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ProviderType = Literal["openai_compatible", "ollama"]
@@ -18,10 +18,24 @@ class ProviderSettingsPayload(BaseModel):
     api_key: str = ""
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_timeout_seconds: float = Field(default=600.0, ge=60.0, le=3600.0)
-    think_level: ThinkLevel = "off"
+    ingestion_think_level: ThinkLevel = "off"
+    chat_think_level: ThinkLevel = "off"
     document_note_batch_size: int = Field(default=5, ge=1, le=20)
     mystery_resolution_batch_size: int = Field(default=5, ge=1, le=20)
     mystery_resolution_reference_mode: MysteryResolutionReferenceMode = "notes_only"
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_split_think_levels_from_legacy_payload(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        if "think_level" not in value:
+            return value
+        legacy_think_level = value["think_level"]
+        payload = dict(value)
+        payload.setdefault("ingestion_think_level", legacy_think_level)
+        payload.setdefault("chat_think_level", legacy_think_level)
+        return payload
 
     @field_validator("data_root", "base_url", "model", mode="before")
     @classmethod

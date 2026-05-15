@@ -161,6 +161,26 @@ def test_load_ingestion_provider_settings_normalizes_invalid_think_level(tmp_pat
     connection.close()
 
 
+def test_load_ingestion_provider_settings_uses_defaults_when_settings_row_is_missing(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    connection.execute("DELETE FROM settings WHERE id = 1")
+    connection.commit()
+
+    settings = load_ingestion_provider_settings(connection)
+
+    assert settings.provider_type == ""
+    assert settings.base_url == ""
+    assert settings.model == ""
+    assert settings.api_key == ""
+    assert settings.temperature == 0.2
+    assert settings.llm_timeout_seconds == 600.0
+    assert settings.think_level == "off"
+    connection.close()
+
+
 def test_search_mystery_candidates_returns_secondary_source_links(tmp_path: Path) -> None:
     config = build_config(tmp_path)
     init_db(config.database_path)

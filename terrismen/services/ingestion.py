@@ -82,6 +82,16 @@ def _load_provider_settings(connection: sqlite3.Connection, think_level_column: 
         WHERE id = 1
         """
     ).fetchone()
+    if row is None:
+        return ProviderSettings(
+            provider_type="",
+            base_url="",
+            model="",
+            api_key="",
+            temperature=0.2,
+            llm_timeout_seconds=600.0,
+            think_level=normalize_think_level(None),
+        )
     return ProviderSettings(
         provider_type=row["provider_type"],
         base_url=row["base_url"],

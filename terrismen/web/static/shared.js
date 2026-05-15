@@ -158,6 +158,8 @@ export function getSettingsState(settings) {
 
 export function summarizeSettings(settings) {
   const missing = [];
+  const ingestionThinkLevel = settings.ingestion_think_level || settings.think_level || "off";
+  const chatThinkLevel = settings.chat_think_level || settings.think_level || "off";
   if (!settings.provider_type) {
     missing.push("provider");
   }
@@ -177,7 +179,9 @@ export function summarizeSettings(settings) {
     settings.base_url,
     settings.api_key ? "API key saved" : "No API key saved",
     `${Math.round(settings.llm_timeout_seconds ?? 600)}s timeout`,
-    ...(settings.provider_type === "ollama" ? [`think ${settings.think_level || "off"}`] : []),
+    ...(settings.provider_type === "ollama"
+      ? [`ingest think ${ingestionThinkLevel}`, `chat think ${chatThinkLevel}`]
+      : []),
     `note batch ${settings.document_note_batch_size ?? 5}`,
     `mystery batch ${settings.mystery_resolution_batch_size ?? 5}`,
     settings.mystery_resolution_reference_mode === "notes_and_sources" ? "notes + sources refs" : "notes-only refs",

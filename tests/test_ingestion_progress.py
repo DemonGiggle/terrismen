@@ -12,10 +12,11 @@ from terrismen.services.ingestion import (
     _resolve_document_mysteries,
     continue_document_ingestion,
     create_document_ingestion,
+    load_chat_provider_settings,
     load_document_note_batch_size,
+    load_ingestion_provider_settings,
     load_mystery_resolution_batch_size,
     load_mystery_resolution_reference_mode,
-    load_provider_settings,
     resume_document_ingestion,
     retry_document_ingestion,
 )
@@ -127,16 +128,55 @@ def test_load_mystery_resolution_reference_mode_uses_default_valid_and_invalid_v
     connection.close()
 
 
-def test_load_provider_settings_normalizes_invalid_think_level(tmp_path: Path) -> None:
+def test_load_provider_settings_use_separate_ingestion_and_chat_think_levels(tmp_path: Path) -> None:
     config = build_config(tmp_path)
     init_db(config.database_path)
     connection = connect(config.database_path)
 
-    connection.execute("UPDATE settings SET think_level = ? WHERE id = 1", ("unexpected",))
+    connection.execute(
+        "UPDATE settings SET ingestion_think_level = ?, chat_think_level = ? WHERE id = 1",
+        ("high", "low"),
+    )
     connection.commit()
 
-    settings = load_provider_settings(connection)
+    ingestion_settings = load_ingestion_provider_settings(connection)
+    chat_settings = load_chat_provider_settings(connection)
 
+    assert ingestion_settings.think_level == "high"
+    assert chat_settings.think_level == "low"
+    connection.close()
+
+
+def test_load_ingestion_provider_settings_normalizes_invalid_think_level(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    connection.execute("UPDATE settings SET ingestion_think_level = ? WHERE id = 1", ("unexpected",))
+    connection.commit()
+
+    settings = load_ingestion_provider_settings(connection)
+
+    assert settings.think_level == "off"
+    connection.close()
+
+
+def test_load_ingestion_provider_settings_uses_defaults_when_settings_row_is_missing(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    connection.execute("DELETE FROM settings WHERE id = 1")
+    connection.commit()
+
+    settings = load_ingestion_provider_settings(connection)
+
+    assert settings.provider_type == ""
+    assert settings.base_url == ""
+    assert settings.model == ""
+    assert settings.api_key == ""
+    assert settings.temperature == 0.2
+    assert settings.llm_timeout_seconds == 600.0
     assert settings.think_level == "off"
     connection.close()
 

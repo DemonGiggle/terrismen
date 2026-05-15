@@ -228,6 +228,19 @@ def build_version_4_database_with_metadata(database_path: Path) -> None:
         connection.commit()
 
 
+def build_version_5_database_with_metadata(database_path: Path) -> None:
+    build_version_4_database_with_metadata(database_path)
+    with connect(database_path) as connection:
+        connection.execute(
+            """
+            ALTER TABLE settings
+            ADD COLUMN think_level TEXT NOT NULL DEFAULT 'off'
+            """
+        )
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+
+
 def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     database_path = tmp_path / "fresh.sqlite3"
 
@@ -237,7 +250,11 @@ def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
     with connect(database_path) as connection:
         settings_count = connection.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
         settings_row = connection.execute(
-            "SELECT document_note_batch_size, think_level FROM settings WHERE id = 1"
+            """
+            SELECT document_note_batch_size, ingestion_think_level, chat_think_level
+            FROM settings
+            WHERE id = 1
+            """
         ).fetchone()
         malformed_notes_exists = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'malformed_notes'"
@@ -245,7 +262,8 @@ def test_init_db_sets_user_version_for_fresh_database(tmp_path) -> None:
 
     assert settings_count == 1
     assert settings_row["document_note_batch_size"] == 5
-    assert settings_row["think_level"] == "off"
+    assert settings_row["ingestion_think_level"] == "off"
+    assert settings_row["chat_think_level"] == "off"
     assert malformed_notes_exists is not None
 
 
@@ -275,7 +293,11 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
             ("legacykeyword",),
         ).fetchall()
         document_note_batch_size = connection.execute(
-            "SELECT document_note_batch_size, think_level FROM settings WHERE id = 1"
+            """
+            SELECT document_note_batch_size, ingestion_think_level, chat_think_level
+            FROM settings
+            WHERE id = 1
+            """
         ).fetchone()
         connection.execute(
             """
@@ -293,7 +315,8 @@ def test_init_db_baselines_current_schema_without_metadata(tmp_path) -> None:
     assert len(rebuilt_hits) == 1
     assert len(trigger_hits) == 1
     assert document_note_batch_size["document_note_batch_size"] == 5
-    assert document_note_batch_size["think_level"] == "off"
+    assert document_note_batch_size["ingestion_think_level"] == "off"
+    assert document_note_batch_size["chat_think_level"] == "off"
 
 
 def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp_path) -> None:
@@ -306,7 +329,8 @@ def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp
     with connect(database_path) as connection:
         row = connection.execute(
             """
-            SELECT document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode, think_level
+            SELECT document_note_batch_size, mystery_resolution_batch_size, mystery_resolution_reference_mode,
+                   ingestion_think_level, chat_think_level
             FROM settings
             WHERE id = 1
             """
@@ -315,20 +339,27 @@ def test_init_db_migrates_version_1_database_to_add_document_note_batch_size(tmp
     assert row["document_note_batch_size"] == 5
     assert row["mystery_resolution_batch_size"] == 5
     assert row["mystery_resolution_reference_mode"] == "notes_only"
-    assert row["think_level"] == "off"
+    assert row["ingestion_think_level"] == "off"
+    assert row["chat_think_level"] == "off"
 
 
-def test_init_db_migrates_version_4_database_to_add_think_level(tmp_path) -> None:
-    database_path = tmp_path / "version4.sqlite3"
-    build_version_4_database_with_metadata(database_path)
+def test_init_db_migrates_version_5_database_to_split_think_level_by_workflow(tmp_path) -> None:
+    database_path = tmp_path / "version5.sqlite3"
+    build_version_5_database_with_metadata(database_path)
+    with connect(database_path) as connection:
+        connection.execute("UPDATE settings SET think_level = ? WHERE id = 1", ("medium",))
+        connection.commit()
 
     init_db(database_path)
 
     assert get_user_version(database_path) == LATEST_SCHEMA_VERSION
     with connect(database_path) as connection:
-        row = connection.execute("SELECT think_level FROM settings WHERE id = 1").fetchone()
+        row = connection.execute(
+            "SELECT ingestion_think_level, chat_think_level FROM settings WHERE id = 1"
+        ).fetchone()
 
-    assert row["think_level"] == "off"
+    assert row["ingestion_think_level"] == "medium"
+    assert row["chat_think_level"] == "medium"
 
 
 def test_init_db_migrates_version_2_database_to_add_note_sources_and_backfill(tmp_path) -> None:

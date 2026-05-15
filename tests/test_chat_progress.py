@@ -5,6 +5,7 @@ from pathlib import Path
 from terrismen.config import AppConfig
 from terrismen.db import connect, init_db, utcnow
 from terrismen.services.chat import _load_sources, continue_chat_request, create_chat_request
+from terrismen.services.ingestion import load_chat_provider_settings
 
 
 class FakeProvider:
@@ -154,6 +155,20 @@ def test_continue_chat_request_persists_failed_step(tmp_path: Path, monkeypatch)
     assert row["progress_step_name"] == "searching candidate notes"
     assert row["progress_step_index"] == 3
     check_connection.close()
+
+
+def test_load_chat_provider_settings_normalizes_invalid_think_level(tmp_path: Path) -> None:
+    config = build_config(tmp_path)
+    init_db(config.database_path)
+    connection = connect(config.database_path)
+
+    connection.execute("UPDATE settings SET chat_think_level = ? WHERE id = 1", ("unexpected",))
+    connection.commit()
+
+    settings = load_chat_provider_settings(connection)
+
+    assert settings.think_level == "off"
+    connection.close()
 
 
 def test_generate_answer_uses_grounded_citation_prompt(tmp_path: Path) -> None:

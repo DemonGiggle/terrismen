@@ -12,7 +12,7 @@ from terrismen.debug import llm_operation_context
 from terrismen.db import connect, utcnow
 from terrismen.llm import build_provider
 from terrismen.llm.base import ProviderError
-from terrismen.services.ingestion import load_provider_settings
+from terrismen.services.ingestion import load_chat_provider_settings
 from terrismen.services.notes import build_reference_label
 from terrismen.services.retrieval import build_fts_query
 
@@ -343,7 +343,7 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
             connection.commit()
             return
 
-        settings = load_provider_settings(connection)
+        settings = load_chat_provider_settings(connection)
         if not settings.is_configured():
             raise ProviderError("Configure a provider before starting chat.")
 
@@ -451,7 +451,7 @@ def _generate_answer(
 
 
 def answer_question(connection: sqlite3.Connection, question: str, document_ids: list[int] | None = None) -> dict[str, object]:
-    settings = load_provider_settings(connection)
+    settings = load_chat_provider_settings(connection)
     if not settings.is_configured():
         raise ProviderError("Configure a provider before starting chat.")
     provider = build_provider(settings)

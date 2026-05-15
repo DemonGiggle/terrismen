@@ -119,18 +119,21 @@ Current behavior:
 - Model: `llama3.2-vision` or another installed model
 - API key: leave blank
 - Timeout: default `600` seconds, configurable in Settings
-- Think level: `off`, `low`, `medium`, or `high`
+- Ingestion think level: `off`, `low`, `medium`, or `high`
+- Chat think level: `off`, `low`, `medium`, or `high`
 
-## Ollama think level setting
+## Ollama think level settings
 
-The Settings page stores an Ollama-only `think_level` control:
+The Settings page stores separate Ollama-only controls for ingestion and chat:
 
 - `off` disables thinking for most Ollama models
 - `low`, `medium`, and `high` request progressively more reasoning where the model supports it
 - non-GPT-OSS models generally treat any non-`off` value as "thinking enabled"
 - GPT-OSS models honor the documented `low` / `medium` / `high` levels and may not fully disable traces
 
-This setting controls **reasoning mode**, not elapsed wall-clock time.
+Ingestion think level applies to note generation and mystery resolution. Chat think level applies to grounded source picking and final answers.
+
+These settings control **reasoning mode**, not elapsed wall-clock time.
 
 ## Notes on source references
 

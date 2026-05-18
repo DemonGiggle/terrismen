@@ -27,7 +27,7 @@ def test_index_links_to_settings_page(tmp_path, monkeypatch) -> None:
     assert "Using selected documents" in response.text
     assert "Document detail" not in response.text
     assert '/static/styles.css?v=asset-notes-hover-20260513' in response.text
-    assert '/static/app.js?v=asset-split-think-level-20260515' in response.text
+    assert '/static/app.js?v=asset-chat-error-canvas-20260518' in response.text
 
 
 def test_settings_page_renders_dedicated_form(tmp_path, monkeypatch) -> None:

@@ -402,9 +402,14 @@ def _continue_chat_request(connection: sqlite3.Connection, request_id: str) -> N
         )
         connection.commit()
     except Exception as exc:
+        assistant_id = save_message(connection, "assistant", f"Error: {exc}", [])
         connection.execute(
-            "UPDATE chat_requests SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
-            (str(exc), utcnow(), request_id),
+            """
+            UPDATE chat_requests
+            SET status = 'failed', error = ?, assistant_message_id = ?, completed_at = ?
+            WHERE id = ?
+            """,
+            (str(exc), assistant_id, utcnow(), request_id),
         )
         connection.commit()
 

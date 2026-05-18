@@ -146,7 +146,11 @@ def test_continue_chat_request_persists_failed_step(tmp_path: Path, monkeypatch)
 
     check_connection = connect(config.database_path)
     row = check_connection.execute(
-        "SELECT status, error, progress_step_name, progress_step_index FROM chat_requests WHERE id = ?",
+        """
+        SELECT status, error, progress_step_name, progress_step_index, assistant_message_id
+        FROM chat_requests
+        WHERE id = ?
+        """,
         (request["id"],),
     ).fetchone()
 
@@ -154,6 +158,13 @@ def test_continue_chat_request_persists_failed_step(tmp_path: Path, monkeypatch)
     assert row["error"] == "search failed"
     assert row["progress_step_name"] == "searching candidate notes"
     assert row["progress_step_index"] == 3
+    assert row["assistant_message_id"] is not None
+    assistant_row = check_connection.execute(
+        "SELECT role, content FROM messages WHERE id = ?",
+        (row["assistant_message_id"],),
+    ).fetchone()
+    assert assistant_row["role"] == "assistant"
+    assert assistant_row["content"] == "Error: search failed"
     check_connection.close()
 
 

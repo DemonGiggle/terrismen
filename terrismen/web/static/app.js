@@ -190,6 +190,20 @@ function renderMessages() {
   typesetMath(elements.chatLog);
 }
 
+function appendAssistantMessage(content) {
+  state.messages = [
+    ...state.messages,
+    {
+      id: `local-${Date.now()}`,
+      role: "assistant",
+      content,
+      citations: [],
+      created_at: new Date().toISOString(),
+    },
+  ];
+  renderMessages();
+}
+
 function describeChatProgress(request) {
   const prefix = request.status === "failed" ? "Failed at" : "Step";
   return `${prefix} ${request.progress_step_index}/${request.progress_step_count}: ${request.progress_step_name}`;
@@ -466,6 +480,13 @@ async function refreshActiveChatRequest() {
       setStatus(request.error || "Chat request failed");
       return;
     }
+  } catch (error) {
+    state.activeChatRequestId = null;
+    syncChatPolling();
+    setChatBusy(false);
+    renderChatProgress(null);
+    appendAssistantMessage(`Error: ${error.message}`);
+    setStatus(error.message);
   } finally {
     state.chatRequestInFlight = false;
   }
@@ -580,8 +601,9 @@ elements.chatForm.addEventListener("submit", async (event) => {
     setStatus(describeChatProgress(request));
   } catch (error) {
     setChatBusy(false);
+    renderChatProgress(null);
+    appendAssistantMessage(`Error: ${error.message}`);
     setStatus(error.message);
-    await loadMessages();
   }
 });
 
